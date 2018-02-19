@@ -1,0 +1,5 @@
+drawing_env.egg-info/PKG-INFO
+drawing_env.egg-info/SOURCES.txt
+drawing_env.egg-info/dependency_links.txt
+drawing_env.egg-info/requires.txt
+drawing_env.egg-info/top_level.txt

@@ -1,0 +1,4 @@
+gym/
+tensorboard/
+.env/
+*.pyc
