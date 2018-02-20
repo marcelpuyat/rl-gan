@@ -7,24 +7,43 @@ import tensorflow as tf
 BETA1 = 0.5
 LEARNING_RATE = 1e-3
 BATCH_SIZE = 1
-DIMENSION = 3
+DIMENSION = 4
 NUM_EPISODES = 50000
 NUM_POSSIBLE_PIXEL_COLORS = 2
-EPSILON_GREEDY_START = 0.4
-EPSILON_GREEDY_PER_EPISODE_DECAY = 0.9999
+EPSILON_GREEDY_START = 0.3
+EPSILON_GREEDY_PER_EPISODE_DECAY = 0.999
 
 env = gym.make('DrawEnv-v0')
 
 # DQN Architecture
 def deep_q_network(state, num_pixels, num_actions_per_pixel):
 	with tf.variable_scope("deep_q_network") as scope:
-        # TODO: Convert this into an actual ConvNet
+
+
+		reshaped_input = tf.reshape(state, [BATCH_SIZE, DIMENSION, DIMENSION, 1])
 
         # Outputs 2 * num pixels, so mod by two to get whether it's black or white, and divide by 2 to get the num action.
-		h0 = lrelu(dense(state, num_pixels * num_actions_per_pixel, name="dense1"))
-		h1 = dense(h0, num_pixels * num_actions_per_pixel, name="dense2")
-		h2 = tf.nn.softmax(h1, name="softmax1")
-		return h2
+		h0 = lrelu(conv2d(reshaped_input, 4, 2, 2, 1, 1, name="conv1"))
+		h1 = lrelu(conv2d(h0, 8, 2, 2, 1, 1, name="conv2"))
+		h2 = lrelu(conv2d(h1, 16, 2, 2, 1, 1, name="conv3"))
+		h2_flatted = tf.reshape(h2, [BATCH_SIZE, DIMENSION * DIMENSION * 16])
+		h3 = dense(h2_flatted, num_pixels * num_actions_per_pixel, name="dense2")
+		return h3
+
+def select_best_action_idx(state, q_value_tensor, state_placeholder_tensor):
+	state_batch = np.array([state])
+	q_value_estimates = sess.run([q_value_tensor], {state_placeholder_tensor: state_batch})
+	non_zero_states = np.argwhere(state != 0)
+	non_zero_actions = np.append(non_zero_states * 2, non_zero_states * 2 + 1)
+	q_value_estimates[b][0][non_zero_actions] = -float('inf')
+	max_idx = np.argmax(q_value_estimates[b][0])
+	return max_idx
+
+def convert_action_idx_to_action(action_idx):
+	# Remember action_idx is in the 1d flattened range of num_pixels * num_actions_per_pixel so
+	# we have to do divison and modulus to fetch out the actual best pixel color and coordinate.
+	return int((action_idx % 2) + 1), int(action_idx / 2)
+
 
 # Set up placeholder
 state_placeholder = tf.placeholder(tf.float32, shape=[BATCH_SIZE, DIMENSION*DIMENSION], name='state')
@@ -83,7 +102,7 @@ for i in xrange(NUM_EPISODES):
 			non_zero_actions = np.append(non_zero_states * 2, non_zero_states * 2 + 1)
 
 			print("Q value estimates prior to validation: " + str (q_value_estimates[b][0]))
-			q_value_estimates[b][0][non_zero_actions] = -100
+			q_value_estimates[b][0][non_zero_actions] = -float('inf')
 			print("Q value estimates after validation: " + str (q_value_estimates[b][0]))
 			max_idx = np.argmax(q_value_estimates[b][0])
 
@@ -101,21 +120,20 @@ for i in xrange(NUM_EPISODES):
 				print("Selecting: ")
 				print(max_idx)
 
-			# Remember max_idx is in the 1d flattened range of num_pixels * num_actions_per_pixel so
-			# we have to do divison and modulus to fetch out the actual best pixel color and coordinate.
-			best_pixel_color, best_pixel_coordinate = int((max_idx % 2) + 1), int(max_idx / 2)
+			best_pixel_color, best_pixel_coordinate = convert_action_idx_to_action(max_idx)
 			print("Best color: " + str(best_pixel_color))
 			print("Best pixel coord: " + str(best_pixel_coordinate))
 
 			# Using the best action, take it and get the reward and set the next state.
-			next_state, reward, episode_done, _ = env.step_with_fill_policy([best_pixel_color, best_pixel_coordinate])
+			next_state, reward, episode_done, _ = env.step_with_fill_policy([best_pixel_color, best_pixel_coordinate], lambda s: convert_action_idx_to_action(select_best_action_idx(s, estimated_q_value, state_placeholder)))
 			print("Reward seen for this action: " + str(reward))
 			print("Reward we thought this action would have: " + str(q_value_estimates[b][0][int(max_idx)]))
 			reward_batch[b] = reward
 
-			next_state_q_values = sess.run([estimated_q_value], {state_placeholder: np.array([next_state])})
-			reward_batch[b] += np.max(next_state_q_values[0][0])
-			print("Q(s',a') = " + str(np.max(next_state_q_values[0][0])))
+			# next_state_q_values = sess.run([estimated_q_value], {state_placeholder: np.array([next_state])})
+
+			# reward_batch[b] += np.max(next_state_q_values[0][0])
+			# print("Q(s',a') = " + str(np.max(next_state_q_values[0][0])))
 
 			curr_state = next_state 
 			action_selection_batch[b] = max_idx

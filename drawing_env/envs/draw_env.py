@@ -12,11 +12,11 @@ NUM_POSSIBLE_PIXEL_VALUES = 3
 
 UNFILLED_REWARD_FACTOR = 3
 
-GAMMA = 0.999
+FAKE_PROB_FACTOR = 5
 REWARD_CONSTANT = 50
 
 class DrawEnv(Env):
-	def __init__(self, dimension=3):
+	def __init__(self, dimension=4):
 		# Dimensions of the drawing. Note that the drawing will always be
 		# a square, so the dimension is both the height and the width.
 		self.dimension = dimension
@@ -39,19 +39,23 @@ class DrawEnv(Env):
 
 		self.sess = tf.Session()
 		self.rl_discriminator = RLDiscriminator(self.sess, dimension, dimension, 1)
-		self.discount_factor = 1
+		self.last_real_prob = 0
+		self.last_fake_prob = 0
 
 	def render(self, mode='human'):
 		# TODO: Write this out to an actual file, and convert the pixel values to a format
 		# that will allow the file to render as an actual image.
 
 		# Right now, we're simply printing out the pixel_values to stdout.
+		self._print_pixels(self.pixel_values)
+
+	def _print_pixels(self, pixels):
 		print("--------------------------")
 		print("\n")
 		for row in xrange(self.dimension):
 			row_str = ''
 			for col in xrange(self.dimension):
-				row_str += str(self.pixel_values[(row * self.dimension) + col]) + " "
+				row_str += str(pixels[(row * self.dimension) + col]) + " "
 			print(row_str + "\n")
 		print("--------------------------")
 
@@ -62,7 +66,6 @@ class DrawEnv(Env):
 	# Note this does not reset the discriminator parameters.
 	def reset(self):
 		self._reset_pixel_values()
-		self.discount_factor = 1
 		return self.pixel_values
 
 	def step_with_fill_policy(self, a, fill_policy=None):
@@ -88,15 +91,14 @@ class DrawEnv(Env):
 		fake_image, num_unfilled_pixels = self._fill_remaining_pixels(fill_policy)
 		print("Had to fill in " + str(num_unfilled_pixels) + " pixels.")
 
-		# Update discount factor
-		self.discount_factor *= GAMMA
-
-		if done:
-			fake_prob = self.rl_discriminator.train(fake_image, True)
+		if done and (self.last_fake_prob > 0.25 or self.last_real_prob < 0.75):
+			print("Actually training Disc")
+			self.last_fake_prob, self.last_real_prob = self.rl_discriminator.train(fake_image, True)
 		else:
-			fake_prob = self.rl_discriminator.get_disc_loss(fake_image, True)
+			print("Not training Disc")
+			self.last_fake_prob, self.last_real_prob = self.rl_discriminator.get_disc_loss(fake_image, True)
 
-		return self.pixel_values, self._compute_reward(fake_prob, num_unfilled_pixels), done, {}
+		return self.pixel_values, self._compute_reward(self.last_fake_prob, num_unfilled_pixels), done, {}
 
 	def _reset_pixel_values(self):
 		# The actual pixel values of the drawing. We start out with all values
@@ -112,19 +114,30 @@ class DrawEnv(Env):
 		# So we just try fake_prob / (num_unfilled_pixels + 1).
 		# Note the +1 is needed so we don't divide by zero.
 		# TODO: Experiment with this.
-		return (fake_prob - 1) / ((num_unfilled_pixels + 1) * UNFILLED_REWARD_FACTOR) * self.discount_factor * REWARD_CONSTANT
+		return (fake_prob - 0.25) * FAKE_PROB_FACTOR / ((num_unfilled_pixels + 1) * UNFILLED_REWARD_FACTOR)
 
 	# Returns a copied state with the remaining pixels filled in according to the current policy,
 	# and also returns the number of pixels that had to be filled in.
 	def _fill_remaining_pixels(self, fill_policy=None):
 		# TODO, actually do this properly.
-		copied_pixels = np.copy(self.pixel_values)
 		num_unfilled_pixels = 0
-		for i in xrange(copied_pixels.size):
-			# For now, if we find an empty pixel, just fill it in with a random pixel.
-			if copied_pixels[i] == 0:
-				copied_pixels[i] = np.random.randint(1,3)
-				num_unfilled_pixels += 1
+		copied_pixels = np.copy(self.pixel_values)
+		print("Filling in with fill policy")
+		while not np.all(copied_pixels):
+			num_unfilled_pixels += 1
+			action = fill_policy(copied_pixels)
+			print("Taking action: " + str(action))
+			copied_pixels[action[1]] = action[0]
+		print("Filled in with policy... rendering")
+		self._print_pixels(copied_pixels)
 		return copied_pixels, num_unfilled_pixels
+
+
+		# for i in xrange(copied_pixels.size):
+		# 	# For now, if we find an empty pixel, just fill it in with a random pixel.
+		# 	if copied_pixels[i] == 0:
+		# 		copied_pixels[i] = np.random.randint(1,3)
+		# 		num_unfilled_pixels += 1
+		# return copied_pixels, num_unfilled_pixels
 
 

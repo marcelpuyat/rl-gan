@@ -9,7 +9,7 @@ def conv2d(input_, output_dim, kernel_h=5, kernel_w=5, stride_h=2, stride_w=2, s
 
 		biases = tf.get_variable('biases', [output_dim], initializer=tf.constant_initializer(0.0))
 		conv = tf.reshape(tf.nn.bias_add(conv, biases), conv.get_shape())
-
+		tf.summary.histogram("weights", w)
 		return conv
 
 def lrelu(x, leak=0.2, name="lrelu"):

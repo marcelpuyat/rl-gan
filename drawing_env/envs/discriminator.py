@@ -30,7 +30,7 @@ class RLDiscriminator(object):
             print("\tFake loss: " + str(fake_loss))
             print("\tFake prob: " + str(fake_prob))
             print("")
-        return fake_prob
+        return fake_prob, real_prob
 
     def get_disc_loss(self, fake_image, debug=False):
         real_batch = self._get_next_real_batch()
@@ -44,7 +44,7 @@ class RLDiscriminator(object):
             print("\tFake loss: " + str(fake_loss))
             print("\tFake prob: " + str(fake_prob))
             print("")
-        return fake_prob
+        return fake_prob, real_prob
 
     # Set up all the tensors for training.
     def _build_discriminator_model(self):
@@ -75,9 +75,10 @@ class RLDiscriminator(object):
 
     def _get_next_real_image(self):
         # For now, this is just a 4x4 image with a black dot in the middle.
-        return np.array([1, 1, 1, \
-                         1, 2, 1, \
-                         1, 1, 1,])
+        return np.array([1, 1, 1, 1, \
+                         1, 2, 2, 1, \
+                         1, 2, 2, 1, \
+                         1, 1, 1, 1])
 
     # Build the discriminator model and return the output tensor and the logits tensor.
     def _discriminator(self, image, reuse=False):
@@ -85,9 +86,10 @@ class RLDiscriminator(object):
             if reuse:
                 scope.reuse_variables()
 
-            noisy_image = gaussian_noise_layer(image)
+            # noisy_image = gaussian_noise_layer(image)
             # TODO: Convert this into an actual ConvNet
-            h0 = lrelu(dense(noisy_image, 10, name="dense1"))
-            h1 = dense(h0, 1, name="dense2")
+            h0 = lrelu(dense(image, 32, name="dense1"))
+            h1 = lrelu(dense(h0, 32, name="dense2"))
+            h2 = dense(h1, 1, name="dense3")
 
-            return tf.nn.sigmoid(h1), h1
+            return tf.nn.sigmoid(h2), h2
