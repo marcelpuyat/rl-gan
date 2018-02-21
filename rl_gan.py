@@ -5,12 +5,12 @@ import numpy as np
 import tensorflow as tf
 
 BETA1 = 0.5
-LEARNING_RATE = 1e-3
+LEARNING_RATE = 5e-3
 BATCH_SIZE = 1
-DIMENSION = 4
-NUM_EPISODES = 50000
+DIMENSION = 5
+NUM_EPISODES = 100000
 NUM_POSSIBLE_PIXEL_COLORS = 2
-EPSILON_GREEDY_START = 0.3
+EPSILON_GREEDY_START = 0.25
 EPSILON_GREEDY_PER_EPISODE_DECAY = 0.999
 
 env = gym.make('DrawEnv-v0')
@@ -47,12 +47,11 @@ def convert_action_idx_to_action(action_idx):
 
 # Set up placeholder
 state_placeholder = tf.placeholder(tf.float32, shape=[BATCH_SIZE, DIMENSION*DIMENSION], name='state')
-actual_reward = tf.placeholder(tf.float32, shape=[BATCH_SIZE, 1], name='actual_reward')
-action_selection = tf.placeholder(tf.int32, shape=[BATCH_SIZE, 1], name='action_selection')
+action_rewards = tf.placeholder(tf.float32, shape=[BATCH_SIZE, DIMENSION*DIMENSION*NUM_POSSIBLE_PIXEL_COLORS], name='actual_reward')
 
 # Set up loss function
 estimated_q_value = deep_q_network(state_placeholder, DIMENSION*DIMENSION, NUM_POSSIBLE_PIXEL_COLORS)
-objective_fn = tf.losses.mean_squared_error(actual_reward, tf.gather(estimated_q_value, action_selection, axis=1)[0])
+objective_fn = tf.losses.mean_squared_error(action_rewards, estimated_q_value)
 tf.summary.scalar("DQN Loss", objective_fn)
 # Set up optimizer
 q_optimizer = tf.train.AdamOptimizer(LEARNING_RATE, BETA1)
@@ -65,7 +64,7 @@ train_q_network = q_optimizer.apply_gradients(grads)
 sess = tf.Session()
 
 merged = tf.summary.merge_all()
-train_writer = tf.summary.FileWriter('tensorboard/',
+train_writer = tf.summary.FileWriter('td_tensorboard/',
 									 sess.graph)
 
 # Initialize TF graph.
@@ -74,8 +73,17 @@ sess.run(tf.global_variables_initializer())
 # Initialize epsilon greedy.
 epsilon_greedy = EPSILON_GREEDY_START
 
+# First train discriminator 100 iterations.
+real_prob = 0.5
+fake_prob = 0.5
+num_iters = 0
+while (real_prob < 0.75 and fake_prob > 0.25) or num_iters < 500:
+	fake_prob, real_prob = env.train_disc_random_fake()
+	num_iters += 1
+
 # Training.
 for i in xrange(NUM_EPISODES):
+	tf.summary.scalar("epsilon greedy", epsilon_greedy)
 	print("Episode num: " + str(i))
 	curr_state = env.reset()
 	episode_done = False
@@ -90,20 +98,17 @@ for i in xrange(NUM_EPISODES):
 		# First do a forward prop to select the best action given the current state.
 		q_value_estimates = sess.run([estimated_q_value], {state_placeholder: state_batch})
 
-		print("Estimated Q Values: " + str(q_value_estimates))
-
-		reward_batch = np.zeros((BATCH_SIZE,1))
-		action_selection_batch = np.zeros((BATCH_SIZE,1))
+		action_rewards_batch = np.zeros((BATCH_SIZE,DIMENSION*DIMENSION*NUM_POSSIBLE_PIXEL_COLORS))
 		# For now, let's just do a loop over all the items in a batch...
 		for b in xrange(BATCH_SIZE):
 			s = state_batch[b]
 			non_zero_states = np.argwhere(s != 0)
-			print("Non zero states: " + str(non_zero_states))
 			non_zero_actions = np.append(non_zero_states * 2, non_zero_states * 2 + 1)
 
-			print("Q value estimates prior to validation: " + str (q_value_estimates[b][0]))
 			q_value_estimates[b][0][non_zero_actions] = -float('inf')
-			print("Q value estimates after validation: " + str (q_value_estimates[b][0]))
+
+			print("Estimated Q Values: " + str(q_value_estimates))
+
 			max_idx = np.argmax(q_value_estimates[b][0])
 
 			# TODO: Make this GLIE
@@ -124,11 +129,36 @@ for i in xrange(NUM_EPISODES):
 			print("Best color: " + str(best_pixel_color))
 			print("Best pixel coord: " + str(best_pixel_coordinate))
 
+			rewards = np.zeros(DIMENSION*DIMENSION*NUM_POSSIBLE_PIXEL_COLORS)
+
 			# Using the best action, take it and get the reward and set the next state.
 			next_state, reward, episode_done, _ = env.step_with_fill_policy([best_pixel_color, best_pixel_coordinate], lambda s: convert_action_idx_to_action(select_best_action_idx(s, estimated_q_value, state_placeholder)))
 			print("Reward seen for this action: " + str(reward))
 			print("Reward we thought this action would have: " + str(q_value_estimates[b][0][int(max_idx)]))
-			reward_batch[b] = reward
+			rewards[max_idx] = reward
+
+			# Fill in rest of TD rewards. TODO: Do this in batch.
+			for action in xrange(DIMENSION*DIMENSION*NUM_POSSIBLE_PIXEL_COLORS):
+				if action == max_idx:
+					continue
+				best_pixel_color, best_pixel_coordinate = convert_action_idx_to_action(action)
+
+				next_state_td, td_reward, td_done, _ = env.get_reward_for_action([best_pixel_color, best_pixel_coordinate], lambda s: convert_action_idx_to_action(select_best_action_idx(s, estimated_q_value, state_placeholder)))
+				if not td_done:
+					# Add Q(s',a') reward
+					td_state_batch = np.array([next_state_td])
+					td_q_value_estimates = sess.run([estimated_q_value], {state_placeholder: td_state_batch})
+					non_zero_states_td = np.argwhere(next_state_td != 0)
+					non_zero_actions_td = np.append(non_zero_states_td * 2, non_zero_states_td * 2 + 1)
+
+					td_q_value_estimates[0][0][non_zero_actions_td] = -float('inf')
+					max_reward_td = np.max(td_q_value_estimates[b][0])
+					td_reward += max_reward_td
+
+
+				rewards[action] = td_reward
+
+			action_rewards_batch[b] = rewards
 
 			# next_state_q_values = sess.run([estimated_q_value], {state_placeholder: np.array([next_state])})
 
@@ -136,17 +166,16 @@ for i in xrange(NUM_EPISODES):
 			# print("Q(s',a') = " + str(np.max(next_state_q_values[0][0])))
 
 			curr_state = next_state 
-			action_selection_batch[b] = max_idx
 
 		print("Training with the following:")
 		print("\t\tState: " + str(state_batch))
-		print("\t\tReward: " + str(reward_batch))
-		print("\t\tReward we thought this action would have: " + str(q_value_estimates[b][0][int(max_idx)]))
-		print("\t\tSelected action: " + str(action_selection_batch))
+		print("\t\tReward: " + str(action_rewards_batch))
+		print("\t\tReward we thought this state would have: " + str(q_value_estimates[b][0]))
+		print("\t\tSelected action: " + str(max_idx))
 		# Given the reward, train our DQN.
-		_, loss, summary = sess.run([train_q_network, objective_fn, merged], {state_placeholder: state_batch, actual_reward: reward_batch, action_selection: action_selection_batch})
+		_, loss = sess.run([train_q_network, objective_fn], {state_placeholder: state_batch, action_rewards: action_rewards_batch})
 		print("DQN Loss: " + str(loss))
-		train_writer.add_summary(summary, i)
+		# train_writer.add_summary(summary, i)
 		print("")
 	print("Episode finished. Rendering:")
 	env.render()

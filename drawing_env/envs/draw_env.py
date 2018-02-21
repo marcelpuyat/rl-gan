@@ -10,13 +10,10 @@ from discriminator import RLDiscriminator
 # Two means the pixel color is black.
 NUM_POSSIBLE_PIXEL_VALUES = 3
 
-UNFILLED_REWARD_FACTOR = 3
-
-FAKE_PROB_FACTOR = 5
-REWARD_CONSTANT = 50
+REWARD_FACTOR = 50
 
 class DrawEnv(Env):
-	def __init__(self, dimension=4):
+	def __init__(self, dimension=5):
 		# Dimensions of the drawing. Note that the drawing will always be
 		# a square, so the dimension is both the height and the width.
 		self.dimension = dimension
@@ -68,6 +65,25 @@ class DrawEnv(Env):
 		self._reset_pixel_values()
 		return self.pixel_values
 
+	# TODO: Do this in batch
+	def get_reward_for_action(self, a, fill_policy=None):
+		assert a[0] < NUM_POSSIBLE_PIXEL_VALUES, "Pixel value for an action must fall in range: [0," + str(NUM_POSSIBLE_PIXEL_VALUES-1) + "]. Current invalid action: " + str(a)
+		assert a[0] >= 0, "Pixel value for an action must fall in range: [0," + str(NUM_POSSIBLE_PIXEL_VALUES-1) + "]. Current invalid action: " + str(a)
+		assert a[1] < self.dimension * self.dimension, "Pixel coordinate for an action must fall in range [0," + str(self.dimension*self.dimension-1) + "]. Current invalid action: " + str(a)
+		assert a[1] >= 0, "Pixel coordinate for an action must fall in range [0," + str(self.dimension*self.dimension-1) + "]. Current invalid action: " + str(a)
+		copied_pixels = np.copy(self.pixel_values)
+		copied_pixels[a[1]] = a[0]
+
+		copied_pixels, num_unfilled_pixels = self._fill_remaining_pixels(copied_pixels, fill_policy)
+
+		prob_fake, _ = self.rl_discriminator.get_disc_loss(copied_pixels, False)
+		return copied_pixels, self._compute_reward(prob_fake, num_unfilled_pixels), np.all(copied_pixels), {}
+
+	def train_disc_random_fake(self):
+		rand_fake = np.random.randint(1,3,(self.dimension*self.dimension))
+		fake_prob, real_prob = self.rl_discriminator.train(rand_fake, True)
+		return fake_prob, real_prob
+
 	def step_with_fill_policy(self, a, fill_policy=None):
 		# First check if action is valid.
 		assert a[0] < NUM_POSSIBLE_PIXEL_VALUES, "Pixel value for an action must fall in range: [0," + str(NUM_POSSIBLE_PIXEL_VALUES-1) + "]. Current invalid action: " + str(a)
@@ -88,10 +104,11 @@ class DrawEnv(Env):
 		# a pixel color hasn't been selected for one coordinate).
 		done = np.all(self.pixel_values)
 
-		fake_image, num_unfilled_pixels = self._fill_remaining_pixels(fill_policy)
+		fake_image, num_unfilled_pixels = self._fill_remaining_pixels(self.pixel_values, fill_policy, True)
 		print("Had to fill in " + str(num_unfilled_pixels) + " pixels.")
 
-		if done and (self.last_fake_prob > 0.25 or self.last_real_prob < 0.75):
+		# Training the disc every iter for now...
+		if (self.last_fake_prob > 0.25 or self.last_real_prob < 0.75):
 			print("Actually training Disc")
 			self.last_fake_prob, self.last_real_prob = self.rl_discriminator.train(fake_image, True)
 		else:
@@ -114,22 +131,28 @@ class DrawEnv(Env):
 		# So we just try fake_prob / (num_unfilled_pixels + 1).
 		# Note the +1 is needed so we don't divide by zero.
 		# TODO: Experiment with this.
-		return (fake_prob - 0.25) * FAKE_PROB_FACTOR / ((num_unfilled_pixels + 1) * UNFILLED_REWARD_FACTOR)
+		# Selecting this 0.48 value seemed to make learning a lot faster. Also setting the reward factor to be a lot bigger.
+
+		a = fake_prob - 0.48
+		if a > 0:
+			a *= 10 # Strengthen correct signal reward.
+		return a * REWARD_FACTOR / (num_unfilled_pixels + 1)
 
 	# Returns a copied state with the remaining pixels filled in according to the current policy,
 	# and also returns the number of pixels that had to be filled in.
-	def _fill_remaining_pixels(self, fill_policy=None):
+	def _fill_remaining_pixels(self, pixels, fill_policy=None, debug=False):
 		# TODO, actually do this properly.
 		num_unfilled_pixels = 0
-		copied_pixels = np.copy(self.pixel_values)
-		print("Filling in with fill policy")
+		copied_pixels = np.copy(pixels)
+		# print("Filling in with fill policy")
 		while not np.all(copied_pixels):
 			num_unfilled_pixels += 1
 			action = fill_policy(copied_pixels)
-			print("Taking action: " + str(action))
+			# print("Taking action: " + str(action))
 			copied_pixels[action[1]] = action[0]
-		print("Filled in with policy... rendering")
-		self._print_pixels(copied_pixels)
+		if debug:
+			print("Filled in with policy... rendering")
+			self._print_pixels(copied_pixels)
 		return copied_pixels, num_unfilled_pixels
 
 

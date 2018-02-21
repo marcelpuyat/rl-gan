@@ -74,11 +74,18 @@ class RLDiscriminator(object):
         return batch
 
     def _get_next_real_image(self):
-        # For now, this is just a 4x4 image with a black dot in the middle.
-        return np.array([1, 1, 1, 1, \
-                         1, 2, 2, 1, \
-                         1, 2, 2, 1, \
-                         1, 1, 1, 1])
+        if np.random.randint(0, 2) == 1:
+            return np.array([1, 1, 2, 1, 1,\
+                             1, 1, 2, 1, 1,\
+                             1, 1, 2, 1, 1,\
+                             1, 1, 2, 1, 1,\
+                             1, 1, 2, 1, 1])
+        else:
+            return np.array([1, 1, 1, 1, 1,\
+                             1, 1, 1, 1, 1,\
+                             2, 2, 2, 2, 2,\
+                             1, 1, 1, 1, 1,\
+                             1, 1, 1, 1, 1])
 
     # Build the discriminator model and return the output tensor and the logits tensor.
     def _discriminator(self, image, reuse=False):
@@ -86,10 +93,13 @@ class RLDiscriminator(object):
             if reuse:
                 scope.reuse_variables()
 
-            # noisy_image = gaussian_noise_layer(image)
-            # TODO: Convert this into an actual ConvNet
-            h0 = lrelu(dense(image, 32, name="dense1"))
-            h1 = lrelu(dense(h0, 32, name="dense2"))
-            h2 = dense(h1, 1, name="dense3")
+            reshaped_input = tf.reshape(image, [self.batch_size, self.input_height, self.input_width, 1])
 
-            return tf.nn.sigmoid(h2), h2
+            h0 = lrelu(conv2d(reshaped_input, 4, 2, 2, 1, 1, name="conv1"))
+            h1 = lrelu(conv2d(h0, 8, 2, 2, 1, 1, name="conv2"))
+            h2 = lrelu(conv2d(h1, 16, 2, 2, 1, 1, name="conv3"))
+            h2_flatted = tf.reshape(h2, [self.batch_size, self.input_height * self.input_width * 16])
+            h3 = dense(h2_flatted, self.input_height * self.input_width * 2, name='dense1')
+            h4 = dense(h3, 1, name='dense2')
+
+            return tf.nn.sigmoid(h4), h4
