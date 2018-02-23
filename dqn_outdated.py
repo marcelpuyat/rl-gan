@@ -5,9 +5,9 @@ import numpy as np
 import tensorflow as tf
 
 BETA1 = 0.5
-LEARNING_RATE = 5e-3
+LEARNING_RATE = 1e-2
 BATCH_SIZE = 1
-DIMENSION = 5
+DIMENSION = 6
 NUM_EPISODES = 100000
 NUM_POSSIBLE_PIXEL_COLORS = 2
 EPSILON_GREEDY_START = 0.25
@@ -19,14 +19,14 @@ env = gym.make('DrawEnv-v0')
 def deep_q_network(state, num_pixels, num_actions_per_pixel):
 	with tf.variable_scope("deep_q_network") as scope:
 
-
-		reshaped_input = tf.reshape(state, [BATCH_SIZE, DIMENSION, DIMENSION, 1])
+		batch_size = tf.shape(state)[0]
+		reshaped_input = tf.reshape(state, tf.stack([batch_size, DIMENSION, DIMENSION, 1]))
 
         # Outputs 2 * num pixels, so mod by two to get whether it's black or white, and divide by 2 to get the num action.
 		h0 = lrelu(conv2d(reshaped_input, 4, 2, 2, 1, 1, name="conv1"))
 		h1 = lrelu(conv2d(h0, 8, 2, 2, 1, 1, name="conv2"))
 		h2 = lrelu(conv2d(h1, 16, 2, 2, 1, 1, name="conv3"))
-		h2_flatted = tf.reshape(h2, [BATCH_SIZE, DIMENSION * DIMENSION * 16])
+		h2_flatted = tf.reshape(h2, [batch_size, DIMENSION * DIMENSION * 16])
 		h3 = dense(h2_flatted, num_pixels * num_actions_per_pixel, name="dense2")
 		return h3
 
@@ -46,7 +46,7 @@ def convert_action_idx_to_action(action_idx):
 
 
 # Set up placeholder
-state_placeholder = tf.placeholder(tf.float32, shape=[BATCH_SIZE, DIMENSION*DIMENSION], name='state')
+state_placeholder = tf.placeholder(tf.float32, shape=[None, DIMENSION*DIMENSION], name='state')
 action_rewards = tf.placeholder(tf.float32, shape=[BATCH_SIZE, DIMENSION*DIMENSION*NUM_POSSIBLE_PIXEL_COLORS], name='actual_reward')
 
 # Set up loss function
@@ -77,7 +77,7 @@ epsilon_greedy = EPSILON_GREEDY_START
 real_prob = 0.5
 fake_prob = 0.5
 num_iters = 0
-while (real_prob < 0.75 and fake_prob > 0.25) or num_iters < 500:
+while (real_prob < 0.75 and fake_prob > 0.25) or num_iters < 1000:
 	fake_prob, real_prob = env.train_disc_random_fake()
 	num_iters += 1
 
@@ -137,33 +137,39 @@ for i in xrange(NUM_EPISODES):
 			print("Reward we thought this action would have: " + str(q_value_estimates[b][0][int(max_idx)]))
 			rewards[max_idx] = reward
 
-			# Fill in rest of TD rewards. TODO: Do this in batch.
+			# Fill in rest of TD rewards.
+			td_action_batch = []
 			for action in xrange(DIMENSION*DIMENSION*NUM_POSSIBLE_PIXEL_COLORS):
-				if action == max_idx:
+				if action == max_idx or curr_state[action/2] != 0:
 					continue
-				best_pixel_color, best_pixel_coordinate = convert_action_idx_to_action(action)
+				td_action_batch.append(action)
 
-				next_state_td, td_reward, td_done, _ = env.get_reward_for_action([best_pixel_color, best_pixel_coordinate], lambda s: convert_action_idx_to_action(select_best_action_idx(s, estimated_q_value, state_placeholder)))
-				if not td_done:
-					# Add Q(s',a') reward
-					td_state_batch = np.array([next_state_td])
-					td_q_value_estimates = sess.run([estimated_q_value], {state_placeholder: td_state_batch})
+			pix_coord_batch = []
+			for td_action in td_action_batch:
+				pix, color = convert_action_idx_to_action(td_action)
+				pix_coord_batch.append([pix, color])
+
+
+			next_states_td, td_rewards, td_done, _ = env.get_reward_for_action_batch(curr_state, pix_coord_batch, lambda s: convert_action_idx_to_action(select_best_action_idx(s, estimated_q_value, state_placeholder)))
+			for idx, a in enumerate(td_action_batch):
+				rewards[a] = td_rewards[idx]
+
+			if not td_done:
+				# Add Q(s',a') reward
+				td_q_value_estimates = sess.run([estimated_q_value], {state_placeholder: next_states_td})
+				td_q_value_estimates = td_q_value_estimates[0]
+
+				for idx, next_state_td in enumerate(next_states_td):
 					non_zero_states_td = np.argwhere(next_state_td != 0)
 					non_zero_actions_td = np.append(non_zero_states_td * 2, non_zero_states_td * 2 + 1)
 
-					td_q_value_estimates[0][0][non_zero_actions_td] = -float('inf')
-					max_reward_td = np.max(td_q_value_estimates[b][0])
-					td_reward += max_reward_td
+					td_q_value_estimates[idx][non_zero_actions_td] = -float('inf')
+					max_reward_td = np.max(td_q_value_estimates[idx])
 
 
-				rewards[action] = td_reward
+					rewards[td_action_batch[idx]] += max_reward_td
 
 			action_rewards_batch[b] = rewards
-
-			# next_state_q_values = sess.run([estimated_q_value], {state_placeholder: np.array([next_state])})
-
-			# reward_batch[b] += np.max(next_state_q_values[0][0])
-			# print("Q(s',a') = " + str(np.max(next_state_q_values[0][0])))
 
 			curr_state = next_state 
 

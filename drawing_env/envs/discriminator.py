@@ -32,6 +32,9 @@ class RLDiscriminator(object):
             print("")
         return fake_prob, real_prob
 
+    def get_disc_loss_batch(self, fake_images, debug=False):
+        return self.sess.run([self.disc_fake_loss], {self.fake_input_images: fake_images})
+
     def get_disc_loss(self, fake_image, debug=False):
         real_batch = self._get_next_real_batch()
         fake_batch = np.zeros((1, self.input_height * self.input_width))  # TODO: Somehow do batches for fake images as well...
@@ -48,20 +51,20 @@ class RLDiscriminator(object):
 
     # Set up all the tensors for training.
     def _build_discriminator_model(self):
-        self.real_input_images = tf.placeholder(tf.float32, shape=[self.batch_size, self.input_height*self.input_width], name='real_input_images')
-        self.fake_input_images = tf.placeholder(tf.float32, shape=[self.batch_size, self.input_height*self.input_width], name='fake_input_images')
+        self.real_input_images = tf.placeholder(tf.float32, shape=[None, self.input_height*self.input_width], name='real_input_images')
+        self.fake_input_images = tf.placeholder(tf.float32, shape=[None, self.input_height*self.input_width], name='fake_input_images')
 
         self.discriminator_real_probability, discriminator_real_logits = self._discriminator(self.real_input_images)
         self.discriminator_fake_probability, discriminator_fake_logits = self._discriminator(self.fake_input_images, reuse=True)
 
         # To understand these, it's best to look at the objective function of the basic Goodfellow GAN paper.
         # TODO: Use a more sophisticated loss function with gaussian noise added, etc.
-        self.disc_real_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=discriminator_real_logits, labels=tf.ones_like(discriminator_real_logits)), name="disc_real_cross_entropy")
-        self.disc_fake_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=discriminator_fake_logits, labels=tf.zeros_like(discriminator_fake_logits)), name="disc_fake_cross_entropy")
+        self.disc_real_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=discriminator_real_logits, labels=tf.ones_like(discriminator_real_logits)), name="disc_real_cross_entropy", axis=1)
+        self.disc_fake_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=discriminator_fake_logits, labels=tf.zeros_like(discriminator_fake_logits)), name="disc_fake_cross_entropy", axis=1)
 
         self.train_disc = self._optimize(self.disc_real_loss + self.disc_fake_loss)
 
-    def _optimize(self, loss_tensor, learning_rate=1e-4, beta1=0.5):
+    def _optimize(self, loss_tensor, learning_rate=5e-4, beta1=0.5):
         optimizer = tf.train.AdamOptimizer(learning_rate, beta1)
         grads = optimizer.compute_gradients(loss_tensor)
         # TODO: Tensorboard summary scalar
@@ -74,18 +77,62 @@ class RLDiscriminator(object):
         return batch
 
     def _get_next_real_image(self):
-        if np.random.randint(0, 2) == 1:
+        # return np.array([1, 1,\
+        #                  1, 2])
+        # return np.array([1, 1, 1,\
+        #                  1, 2, 1,\
+        #                  1, 1, 1])
+        rand_num = np.random.randint(0, 7)
+        if rand_num == 0 or rand_num == 6:
             return np.array([1, 1, 2, 1, 1,\
                              1, 1, 2, 1, 1,\
-                             1, 1, 2, 1, 1,\
+                             2, 2, 2, 2, 2,\
                              1, 1, 2, 1, 1,\
                              1, 1, 2, 1, 1])
-        else:
-            return np.array([1, 1, 1, 1, 1,\
+        elif rand_num == 1:
+            return np.array([1, 1, 2, 1, 1,\
+                             1, 1, 2, 1, 1,\
+                             2, 2, 1, 2, 2,\
+                             1, 1, 2, 1, 1,\
+                             1, 1, 2, 1, 1])
+        elif rand_num == 2:
+            return np.array([1, 1, 2, 1, 1,\
                              1, 1, 1, 1, 1,\
                              2, 2, 2, 2, 2,\
+                             1, 1, 2, 1, 1,\
+                             1, 1, 2, 1, 1])
+        elif rand_num == 3:
+            return np.array([1, 1, 2, 1, 1,\
+                             1, 1, 2, 1, 1,\
+                             2, 2, 2, 2, 2,\
                              1, 1, 1, 1, 1,\
-                             1, 1, 1, 1, 1])
+                             1, 1, 2, 1, 1])
+        elif rand_num == 4:
+            return np.array([1, 1, 2, 1, 1,\
+                             1, 1, 2, 1, 1,\
+                             2, 1, 2, 2, 2,\
+                             1, 1, 2, 1, 1,\
+                             1, 1, 2, 1, 1])
+        elif rand_num == 5:
+            return np.array([1, 1, 2, 1, 1,\
+                             1, 1, 2, 1, 1,\
+                             2, 2, 2, 1, 2,\
+                             1, 1, 2, 1, 1,\
+                             1, 1, 2, 1, 1])
+        # if np.random.randint(0, 2) == 1:
+        #     return np.array([2, 2, 2, 2, 2, 2,\
+        #                      2, 1, 1, 1, 1, 2,\
+        #                      2, 1, 1, 1, 1, 2,\
+        #                      2, 1, 1, 1, 1, 2,\
+        #                      2, 1, 1, 1, 1, 2,\
+        #                      2, 2, 2, 2, 2, 2])
+        # else:
+        #     return np.array([1, 1, 2, 2, 1, 1,\
+        #                      1, 1, 2, 2, 1, 1,\
+        #                      2, 2, 2, 2, 2, 2,\
+        #                      2, 2, 2, 2, 2, 2,\
+        #                      1, 1, 2, 2, 1, 1,\
+        #                      1, 1, 2, 2, 1, 1])
 
     # Build the discriminator model and return the output tensor and the logits tensor.
     def _discriminator(self, image, reuse=False):
@@ -93,12 +140,13 @@ class RLDiscriminator(object):
             if reuse:
                 scope.reuse_variables()
 
-            reshaped_input = tf.reshape(image, [self.batch_size, self.input_height, self.input_width, 1])
+            batch_size = tf.shape(image)[0]
+            reshaped_input = tf.reshape(image, tf.stack([batch_size, self.input_height, self.input_width, 1]))
 
             h0 = lrelu(conv2d(reshaped_input, 4, 2, 2, 1, 1, name="conv1"))
             h1 = lrelu(conv2d(h0, 8, 2, 2, 1, 1, name="conv2"))
             h2 = lrelu(conv2d(h1, 16, 2, 2, 1, 1, name="conv3"))
-            h2_flatted = tf.reshape(h2, [self.batch_size, self.input_height * self.input_width * 16])
+            h2_flatted = tf.reshape(h2, [batch_size, self.input_height * self.input_width * 16])
             h3 = dense(h2_flatted, self.input_height * self.input_width * 2, name='dense1')
             h4 = dense(h3, 1, name='dense2')
 

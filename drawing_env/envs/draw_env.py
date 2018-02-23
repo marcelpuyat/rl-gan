@@ -10,7 +10,7 @@ from discriminator import RLDiscriminator
 # Two means the pixel color is black.
 NUM_POSSIBLE_PIXEL_VALUES = 3
 
-REWARD_FACTOR = 50
+REWARD_FACTOR = 2
 
 class DrawEnv(Env):
 	def __init__(self, dimension=5):
@@ -24,7 +24,7 @@ class DrawEnv(Env):
 		#
 		# Note that the actions are to select 0 (meaning color white) or 1
 		# (meaning color black) for a given pixel.
-		self.action_space = spaces.MultiBinary(dimension*dimension)
+		self.action_space = spaces.MultiBinary(dimension*dimension*2)
 
 		# The first value in the action tuple is the pixel.
 		#
@@ -46,13 +46,21 @@ class DrawEnv(Env):
 		# Right now, we're simply printing out the pixel_values to stdout.
 		self._print_pixels(self.pixel_values)
 
+	def render_val(self, val):
+		if val == 1:
+			return "*"
+		if val == 2:
+			return "-"
+		if val == 0:
+			return "_"
+
 	def _print_pixels(self, pixels):
 		print("--------------------------")
 		print("\n")
 		for row in xrange(self.dimension):
 			row_str = ''
 			for col in xrange(self.dimension):
-				row_str += str(pixels[(row * self.dimension) + col]) + " "
+				row_str += str(self.render_val(pixels[(row * self.dimension) + col])) + " "
 			print(row_str + "\n")
 		print("--------------------------")
 
@@ -63,28 +71,113 @@ class DrawEnv(Env):
 	# Note this does not reset the discriminator parameters.
 	def reset(self):
 		self._reset_pixel_values()
-		return self.pixel_values
+		return np.copy(self.pixel_values)
 
-	# TODO: Do this in batch
-	def get_reward_for_action(self, a, fill_policy=None):
-		assert a[0] < NUM_POSSIBLE_PIXEL_VALUES, "Pixel value for an action must fall in range: [0," + str(NUM_POSSIBLE_PIXEL_VALUES-1) + "]. Current invalid action: " + str(a)
-		assert a[0] >= 0, "Pixel value for an action must fall in range: [0," + str(NUM_POSSIBLE_PIXEL_VALUES-1) + "]. Current invalid action: " + str(a)
-		assert a[1] < self.dimension * self.dimension, "Pixel coordinate for an action must fall in range [0," + str(self.dimension*self.dimension-1) + "]. Current invalid action: " + str(a)
-		assert a[1] >= 0, "Pixel coordinate for an action must fall in range [0," + str(self.dimension*self.dimension-1) + "]. Current invalid action: " + str(a)
-		copied_pixels = np.copy(self.pixel_values)
-		copied_pixels[a[1]] = a[0]
+	def get_reward_for_action_batch(self, pixel_values, actions, fill_policy=None):
+		for a in actions:
+			assert a[0] < NUM_POSSIBLE_PIXEL_VALUES, "Pixel value for an action must fall in range: [0," + str(NUM_POSSIBLE_PIXEL_VALUES-1) + "]. Current invalid action: " + str(a)
+			assert a[0] >= 0, "Pixel value for an action must fall in range: [0," + str(NUM_POSSIBLE_PIXEL_VALUES-1) + "]. Current invalid action: " + str(a)
+			assert a[1] < self.dimension * self.dimension, "Pixel coordinate for an action must fall in range [0," + str(self.dimension*self.dimension-1) + "]. Current invalid action: " + str(a)
+			assert a[1] >= 0, "Pixel coordinate for an action must fall in range [0," + str(self.dimension*self.dimension-1) + "]. Current invalid action: " + str(a)
 
-		copied_pixels, num_unfilled_pixels = self._fill_remaining_pixels(copied_pixels, fill_policy)
+		state_batch = np.zeros((len(actions), self.dimension*self.dimension))
+		next_state_batch = np.zeros((len(actions), self.dimension*self.dimension))
+		num_unfilled_pixels = 0
+		for idx, a in enumerate(actions):
+			copied_pixels = np.copy(pixel_values)
+			copied_pixels[a[1]] = a[0]
+			next_state_batch[idx] = np.copy(copied_pixels)
 
-		prob_fake, _ = self.rl_discriminator.get_disc_loss(copied_pixels, False)
-		return copied_pixels, self._compute_reward(prob_fake, num_unfilled_pixels), np.all(copied_pixels), {}
+			state_batch[idx], num_unfilled_pixels = self._fill_remaining_pixels(copied_pixels, fill_policy)
+
+		probs_fake = self.rl_discriminator.get_disc_loss_batch(state_batch, False)
+		rewards = np.zeros(len(probs_fake[0]))
+		for idx, p in enumerate(probs_fake[0]):
+			rewards[idx] = self._compute_reward(p, num_unfilled_pixels)
+
+		return next_state_batch, rewards, num_unfilled_pixels == 0, {}
 
 	def train_disc_random_fake(self):
 		rand_fake = np.random.randint(1,3,(self.dimension*self.dimension))
 		fake_prob, real_prob = self.rl_discriminator.train(rand_fake, True)
 		return fake_prob, real_prob
 
-	def step_with_fill_policy(self, a, fill_policy=None):
+	def _convert_action_idx_to_action(self, action_idx):
+		# Remember action_idx is in the 1d flattened range of num_pixels * num_actions_per_pixel so
+		# we have to do divison and modulus to fetch out the actual best pixel color and coordinate.
+		return int((action_idx % 2) + 1), int(action_idx / 2)
+
+	def step_with_random(self, action_idx):
+		a = self._convert_action_idx_to_action(action_idx)
+		assert a[0] < NUM_POSSIBLE_PIXEL_VALUES, "Pixel value for an action must fall in range: [0," + str(NUM_POSSIBLE_PIXEL_VALUES-1) + "]. Current invalid action: " + str(a)
+		assert a[0] >= 0, "Pixel value for an action must fall in range: [0," + str(NUM_POSSIBLE_PIXEL_VALUES-1) + "]. Current invalid action: " + str(a)
+		assert a[1] < self.dimension * self.dimension, "Pixel coordinate for an action must fall in range [0," + str(self.dimension*self.dimension-1) + "]. Current invalid action: " + str(a)
+		assert a[1] >= 0, "Pixel coordinate for an action must fall in range [0," + str(self.dimension*self.dimension-1) + "]. Current invalid action: " + str(a)
+		
+		# Case where the pixel value is already set. We just fill in a random pixel and give a negative reward.
+		if self.pixel_values[a[1]] != -1:
+			print("Selecting non-zero coord. Taking random one instead")
+			zero_indices = np.argwhere(self.pixel_values == -1).flatten()
+			random_zero_index = np.random.choice(zero_indices)
+			print(random_zero_index)
+			self.pixel_values[random_zero_index] = np.random.randint(1,3)
+			return np.copy(self.pixel_values), -10, np.argwhere(self.pixel_values == -1).flatten().size == 0, {}, False
+
+		# Set the pixel value in our state based on the action.
+		self.pixel_values[a[1]] = a[0]
+
+		# We can do this because np.all returns true unless there is any zero-valued pixel (meaning
+		# a pixel color hasn't been selected for one coordinate).
+		done = np.argwhere(self.pixel_values == -1).flatten().size == 0
+
+		if not done:
+			return np.copy(self.pixel_values), 0, False, {}, True
+
+		if (self.last_fake_prob > 0.25 or self.last_real_prob < 0.75):
+			print("Actually training Disc")
+			self.last_fake_prob, self.last_real_prob = self.rl_discriminator.train(self.pixel_values, True)
+		else:
+			print("Not training Disc")
+			self.last_fake_prob, self.last_real_prob = self.rl_discriminator.get_disc_loss(self.pixel_values, True)
+
+		return np.copy(self.pixel_values), self._compute_reward(self.last_fake_prob[0][0], 0), done, {}, True
+
+	def step(self, action_idx):
+		a = self._convert_action_idx_to_action(action_idx)
+		# First check if action is valid.
+		assert a[0] < NUM_POSSIBLE_PIXEL_VALUES, "Pixel value for an action must fall in range: [0," + str(NUM_POSSIBLE_PIXEL_VALUES-1) + "]. Current invalid action: " + str(a)
+		assert a[0] >= 0, "Pixel value for an action must fall in range: [0," + str(NUM_POSSIBLE_PIXEL_VALUES-1) + "]. Current invalid action: " + str(a)
+		assert a[1] < self.dimension * self.dimension, "Pixel coordinate for an action must fall in range [0," + str(self.dimension*self.dimension-1) + "]. Current invalid action: " + str(a)
+		assert a[1] >= 0, "Pixel coordinate for an action must fall in range [0," + str(self.dimension*self.dimension-1) + "]. Current invalid action: " + str(a)
+
+		# If the action is None or if it sets a pixel to 0 or if this coordinate is already set.
+		if a is None or a[0] == 0 or self.pixel_values[a[1]] != 0:
+			if self.pixel_values[a[1]] != 0:
+				print("Trying to set pixel coordinate " + str(a[1]) + " to " + str(a[0]) + " when a value is already selected for it: " + str(self.pixel_values[a[1]]))
+			return np.copy(self.pixel_values), -100, False, {}
+
+		# Set the pixel value in our state based on the action.
+		self.pixel_values[a[1]] = a[0]
+
+		# We can do this because np.all returns true unless there is any zero-valued pixel (meaning
+		# a pixel color hasn't been selected for one coordinate).
+		done = np.all(self.pixel_values)
+
+		if not done:
+			return np.copy(self.pixel_values), 0, False, {}
+
+		if (self.last_fake_prob > 0.25 or self.last_real_prob < 0.75):
+			print("Actually training Disc")
+			self.last_fake_prob, self.last_real_prob = self.rl_discriminator.train(self.pixel_values, True)
+		else:
+			print("Not training Disc")
+			self.last_fake_prob, self.last_real_prob = self.rl_discriminator.get_disc_loss(self.pixel_values, True)
+
+		return np.copy(self.pixel_values), self._compute_reward(self.last_fake_prob[0][0], 0), done, {}
+
+
+	def step_with_fill_policy(self, action_idx, fill_policy=None):
+		a = self._convert_action_idx_to_action(action_idx)
 		# First check if action is valid.
 		assert a[0] < NUM_POSSIBLE_PIXEL_VALUES, "Pixel value for an action must fall in range: [0," + str(NUM_POSSIBLE_PIXEL_VALUES-1) + "]. Current invalid action: " + str(a)
 		assert a[0] >= 0, "Pixel value for an action must fall in range: [0," + str(NUM_POSSIBLE_PIXEL_VALUES-1) + "]. Current invalid action: " + str(a)
@@ -104,8 +197,11 @@ class DrawEnv(Env):
 		# a pixel color hasn't been selected for one coordinate).
 		done = np.all(self.pixel_values)
 
-		fake_image, num_unfilled_pixels = self._fill_remaining_pixels(self.pixel_values, fill_policy, True)
+		fake_image, num_unfilled_pixels, tried_to_fill_already_filled_pixel = self._fill_remaining_pixels(self.pixel_values, fill_policy, True)
 		print("Had to fill in " + str(num_unfilled_pixels) + " pixels.")
+		if tried_to_fill_already_filled_pixel:
+			print("During fill policy, tried to fill already filled pixel. Returning bad reward.")
+			return self.pixel_values, -10 / num_unfilled_pixels, done, {}
 
 		# Training the disc every iter for now...
 		if (self.last_fake_prob > 0.25 or self.last_real_prob < 0.75):
@@ -120,7 +216,7 @@ class DrawEnv(Env):
 	def _reset_pixel_values(self):
 		# The actual pixel values of the drawing. We start out with all values
 		# equal to zero, meaning none of the pixel colors have been selected yet.
-		self.pixel_values = np.full(self.dimension*self.dimension, 0)
+		self.pixel_values = np.full(self.dimension*self.dimension, -1)
 
 	# The reward is a function of how much we were able to trick the discriminator (i.e. how
 	# high the fake_prob is) and how many pixels had to be filled in.
@@ -147,13 +243,16 @@ class DrawEnv(Env):
 		# print("Filling in with fill policy")
 		while not np.all(copied_pixels):
 			num_unfilled_pixels += 1
-			action = fill_policy(copied_pixels)
-			# print("Taking action: " + str(action))
+			action_idx = fill_policy(copied_pixels)
+			action = self._convert_action_idx_to_action(action_idx)
+			if (copied_pixels[action[1]] != 0):
+				# Returning early because we tried to fill an already filled pixel
+				return copied_pixels, num_unfilled_pixels, True
 			copied_pixels[action[1]] = action[0]
 		if debug:
 			print("Filled in with policy... rendering")
 			self._print_pixels(copied_pixels)
-		return copied_pixels, num_unfilled_pixels
+		return copied_pixels, num_unfilled_pixels, False
 
 
 		# for i in xrange(copied_pixels.size):
