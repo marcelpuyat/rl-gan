@@ -1,3 +1,2 @@
 gym
-tensorflow
-tensorforce
+tensorflow==1.5
