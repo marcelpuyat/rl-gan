@@ -13,7 +13,7 @@ NUM_POSSIBLE_PIXEL_VALUES = 3
 REWARD_FACTOR = 2
 
 class DrawEnv(Env):
-	def __init__(self, dimension=5):
+	def __init__(self, dimension=6):
 		# Dimensions of the drawing. Note that the drawing will always be
 		# a square, so the dimension is both the height and the width.
 		self.dimension = dimension
