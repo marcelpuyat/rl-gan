@@ -98,8 +98,11 @@ class DrawEnv(Env):
 		return next_state_batch, rewards, num_unfilled_pixels == 0, {}
 
 	def train_disc_random_fake(self):
-		rand_fake = np.random.randint(1,3,(self.dimension*self.dimension))
-		fake_prob, real_prob = self.rl_discriminator.train(rand_fake, True)
+		rand_fake = np.random.randint(2,4,(self.dimension*self.dimension))
+		num_zeroed_out = np.random.randint(0, self.dimension*self.dimension)
+		if num_zeroed_out != 0:
+			rand_fake[-num_zeroed_out:] = 1
+		fake_prob, real_prob = self.rl_discriminator.train(rand_fake, num_zeroed_out, True)
 		return fake_prob, real_prob
 
 	def _convert_action_idx_to_action(self, action_idx):
@@ -107,30 +110,40 @@ class DrawEnv(Env):
 		# we have to do divison and modulus to fetch out the actual best pixel color and coordinate.
 		return int((action_idx % 2) + 1), int(action_idx / 2)
 
+	def try_step(self, a):
+		assert a < NUM_POSSIBLE_PIXEL_VALUES, "Pixel value for an action must fall in range: [0," + str(NUM_POSSIBLE_PIXEL_VALUES-1) + "]. Current invalid action: " + str(a)
+		assert a >= 0, "Pixel value for an action must fall in range: [0," + str(NUM_POSSIBLE_PIXEL_VALUES-1) + "]. Current invalid action: " + str(a)
+
+		copy = np.copy(self.pixel_values)
+		copy[self.coordinate] = a + 2
+
+		num_zeroed_out = copy.size - self.coordinate
+
+		print("Testing disc with taking try action " + str(a+2) + " at coordinate: " + str(self.coordinate))
+		fake_prob, _ = self.rl_discriminator.get_disc_loss(copy, num_zeroed_out, True)
+		return None, self._compute_reward(fake_prob[0][0], 0), False, {} 
+
+
 	def step(self, a):
 		assert a < NUM_POSSIBLE_PIXEL_VALUES, "Pixel value for an action must fall in range: [0," + str(NUM_POSSIBLE_PIXEL_VALUES-1) + "]. Current invalid action: " + str(a)
 		assert a >= 0, "Pixel value for an action must fall in range: [0," + str(NUM_POSSIBLE_PIXEL_VALUES-1) + "]. Current invalid action: " + str(a)
 
-
-
 		# Set the pixel value in our state based on the action.
 		self.pixel_values[self.coordinate] = a + 2
 
+		print("Testing disc with taking real action " + str(a+2) + " at coordinate: " + str(self.coordinate))
 		self.coordinate += 1
 
 		done = self.coordinate == self.dimension*self.dimension
-
-		if not done:
-			return {'pixels': np.copy(self.pixel_values), 'coordinate': self.coordinate}, 0, done, {}, True
-
-		if (self.last_fake_prob > 0.25 or self.last_real_prob < 0.75):
+		num_zeroed_out = self.pixel_values.size - self.coordinate
+		if (self.last_fake_prob > 0.1 or self.last_real_prob < 0.9):
 			print("Actually training Disc")
-			self.last_fake_prob, self.last_real_prob = self.rl_discriminator.train(self.pixel_values, True)
+			self.last_fake_prob, self.last_real_prob = self.rl_discriminator.train(self.pixel_values, num_zeroed_out, True)
 		else:
 			print("Not training Disc")
-			self.last_fake_prob, self.last_real_prob = self.rl_discriminator.get_disc_loss(self.pixel_values, True)
+			self.last_fake_prob, self.last_real_prob = self.rl_discriminator.get_disc_loss(self.pixel_values, num_zeroed_out, True)
 
-		return {'pixels': np.copy(self.pixel_values), 'coordinate': self.coordinate}, self._compute_reward(self.last_fake_prob[0][0], 0), done, {}, True
+		return {'pixels': np.copy(self.pixel_values), 'coordinate': self.coordinate}, self._compute_reward(self.last_fake_prob[0][0], 0), done, {}
 
 	# def step(self, action_idx):
 	# 	a = self._convert_action_idx_to_action(action_idx)

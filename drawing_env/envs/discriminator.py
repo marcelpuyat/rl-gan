@@ -18,16 +18,14 @@ class RLDiscriminator(object):
     # loss. Returns the probability the model assigned to the fake image. The closer this value
     # is to 1, this means the model is getting tricked by the fake_image into thinking it's a
     # real image.
-    def train(self, fake_image, debug=False):
-        real_batch = self._get_next_real_batch()
+    def train(self, fake_image, num_zeroed_out, debug=False):
+        real_batch = self._get_next_real_batch(num_zeroed_out)
         fake_batch = np.zeros((1, self.input_height * self.input_width))  # TODO: Somehow do batches for fake images as well...
         fake_batch[0] = fake_image
         _, real_loss, real_prob, fake_loss, fake_prob = self.sess.run([self.train_disc, self.disc_real_loss, self.discriminator_real_probability, self.disc_fake_loss, self.discriminator_fake_probability], {self.real_input_images: real_batch, self.fake_input_images: fake_batch})
         if debug:
             print("Disc loss")
-            print("\tReal loss: " + str(real_loss))
             print("\tReal prob: " + str(real_prob))
-            print("\tFake loss: " + str(fake_loss))
             print("\tFake prob: " + str(fake_prob))
             print("")
         return fake_prob, real_prob
@@ -35,8 +33,8 @@ class RLDiscriminator(object):
     def get_disc_loss_batch(self, fake_images, debug=False):
         return self.sess.run([self.disc_fake_loss], {self.fake_input_images: fake_images})
 
-    def get_disc_loss(self, fake_image, debug=False):
-        real_batch = self._get_next_real_batch()
+    def get_disc_loss(self, fake_image, num_zeroed_out, debug=False):
+        real_batch = self._get_next_real_batch(num_zeroed_out)
         fake_batch = np.zeros((1, self.input_height * self.input_width))  # TODO: Somehow do batches for fake images as well...
         fake_batch[0] = fake_image
         real_loss, real_prob, fake_loss, fake_prob = self.sess.run([self.disc_real_loss, self.discriminator_real_probability, self.disc_fake_loss, self.discriminator_fake_probability], {self.real_input_images: real_batch, self.fake_input_images: fake_batch})
@@ -70,18 +68,21 @@ class RLDiscriminator(object):
         # TODO: Tensorboard summary scalar
         return optimizer.apply_gradients(grads)
 
-    def _get_next_real_batch(self):
+    def _get_next_real_batch(self, num_zeroed_out):
         batch = np.zeros((self.batch_size, self.input_height * self.input_width))
         for i in xrange(self.batch_size):
-            batch[i] = self._get_next_real_image()
+            image = self._get_next_real_image()
+            if num_zeroed_out != 0:
+                image[-num_zeroed_out:] = 1
+            batch[i] = image
         return batch
 
     def _get_next_real_image(self):
         # return np.array([1, 1,\
         #                  1, 2])
-        # return np.array([1, 1, 1,\
-        #                  1, 2, 1,\
-        #                  1, 1, 1])
+        # return np.array([2, 2, 2,\
+        #                  2, 3, 2,\
+        #                  2, 2, 2])
         rand_num = np.random.randint(0, 7)
         if rand_num == 0 or rand_num == 6:
             return np.array([2, 2, 3, 2, 2,\
@@ -127,12 +128,49 @@ class RLDiscriminator(object):
         #                      2, 1, 1, 1, 1, 2,\
         #                      2, 2, 2, 2, 2, 2])
         # else:
-        #     return np.array([1, 1, 2, 2, 1, 1,\
-        #                      1, 1, 2, 2, 1, 1,\
+        # rand_num = np.random.randint(0, 6)
+        # if rand_num == 0:
+        #     return np.array([3, 3, 2, 2, 3, 3,\
+        #                      3, 3, 2, 2, 3, 3,\
+        #                      3, 3, 2, 2, 3, 3,\
+        #                      3, 3, 2, 2, 3, 3,\
+        #                      3, 3, 2, 2, 3, 3,\
+        #                      3, 3, 2, 2, 3, 3])
+        # elif rand_num == 1:
+        #     return np.array([2, 2, 2, 2, 2, 2,\
+        #                      3, 3, 3, 3, 3, 2,\
         #                      2, 2, 2, 2, 2, 2,\
         #                      2, 2, 2, 2, 2, 2,\
-        #                      1, 1, 2, 2, 1, 1,\
-        #                      1, 1, 2, 2, 1, 1])
+        #                      2, 3, 3, 3, 3, 3,\
+        #                      2, 2, 2, 2, 2, 2])
+        # elif rand_num == 2:
+        #     return np.array([2, 2, 2, 2, 2, 2,\
+        #                      3, 3, 2, 2, 3, 2,\
+        #                      2, 2, 2, 2, 2, 2,\
+        #                      2, 2, 2, 2, 2, 2,\
+        #                      3, 3, 3, 3, 3, 2,\
+        #                      2, 2, 2, 2, 2, 2])
+        # elif rand_num == 3:
+        #     return np.array([2, 2, 3, 3, 2, 2,\
+        #                      2, 2, 3, 3, 2, 2,\
+        #                      2, 2, 2, 2, 2, 2,\
+        #                      2, 2, 2, 2, 2, 2,\
+        #                      3, 3, 3, 3, 2, 2,\
+        #                      3, 3, 3, 3, 2, 2])
+        # elif rand_num == 4:
+        #     return np.array([2, 2, 2, 2, 2, 2,\
+        #                      2, 3, 3, 3, 3, 3,\
+        #                      2, 2, 2, 2, 2, 2,\
+        #                      2, 2, 2, 2, 2, 2,\
+        #                      3, 3, 3, 3, 3, 2,\
+        #                      2, 2, 2, 2, 2, 2])
+        # elif rand_num == 5:
+        #     return np.array([2, 2, 2, 2, 2, 2,\
+        #                      2, 3, 3, 3, 3, 3,\
+        #                      2, 3, 3, 3, 3, 3,\
+        #                      2, 2, 2, 2, 2, 2,\
+        #                      2, 3, 3, 3, 3, 2,\
+        #                      2, 2, 2, 2, 2, 2]) 
 
     # Build the discriminator model and return the output tensor and the logits tensor.
     def _discriminator(self, image, reuse=False):
