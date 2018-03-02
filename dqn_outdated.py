@@ -8,8 +8,11 @@ import math
 BETA1 = 0.5
 LEARNING_RATE = 5e-3
 BATCH_SIZE = 1
-DIMENSION = 6
-NUM_EPISODES = 100000
+DIMENSION = 4
+
+NUM_EPISODES = 50000
+NUM_STATES = DIMENSION*DIMENSION
+
 NUM_POSSIBLE_PIXEL_COLORS = 2
 EPSILON_GREEDY_START = 0.25
 EPSILON_GREEDY_PER_EPISODE_DECAY = 0.9999
@@ -41,7 +44,7 @@ action_mask = tf.one_hot(action_selected_placeholder, 2, 1.0, 0.0)
 
 # Set up loss function
 estimated_q_value = deep_q_network(pixels_placeholder, coordinate_placeholder, NUM_POSSIBLE_PIXEL_COLORS)
-objective_fn = tf.reduce_sum(tf.square(action_rewards_placeholder - tf.reduce_sum(estimated_q_value * action_mask, axis=1)))
+objective_fn = tf.reduce_mean(tf.square(action_rewards_placeholder - tf.reduce_sum(estimated_q_value * action_mask, axis=1)))
 tf.summary.scalar("DQN Loss", objective_fn)
 # Set up optimizer
 q_optimizer = tf.train.AdamOptimizer(LEARNING_RATE, BETA1)
@@ -52,9 +55,10 @@ for grad, var in grads:
 train_q_network = q_optimizer.apply_gradients(grads)
 
 sess = tf.Session()
+env.set_session(sess)
 
 merged = tf.summary.merge_all()
-train_writer = tf.summary.FileWriter('td_tensorboard/',
+train_writer = tf.summary.FileWriter('tensorboard/',
 									 sess.graph)
 
 # Initialize TF graph.
@@ -109,10 +113,14 @@ for i in xrange(NUM_EPISODES):
 		elif action_count[state_bytes][selected_action] != 0:
 			print("Num times we've taken preferred in this state: " + str(action_count[state_bytes][selected_action]))
 			print("Num times we've taken other in this state: " + str(action_count[state_bytes][other_action]))
-			rand_prob = (1 - action_count[state_bytes][other_action] / action_count[state_bytes][selected_action])
-			rand_prob /= math.sqrt(action_count[state_bytes][selected_action])
+			rand_prob = (0.35 - (float(action_count[state_bytes][other_action]) / \
+				(action_count[state_bytes][other_action] + action_count[state_bytes][selected_action])))
+
+			# Annealing based on state #
+			rand_prob /= math.sqrt((NUM_STATES - curr_state['coordinate']) / (4 * (1 - (float(i) / NUM_EPISODES))))
+
 			print("Probability of switching: " + str(rand_prob))
-			rand_prob = min(rand_prob, 0.30)
+			rand_prob = max(rand_prob, 0)
 
 		if np.random.rand() < rand_prob:
 			print("Selecting random action, rand prob: " + str(rand_prob))
@@ -140,14 +148,23 @@ for i in xrange(NUM_EPISODES):
 	coordinates_batch = coordinates_batch[random_order]
 	actions_selected_batch = actions_selected_batch[random_order]
 	# Given the reward, train our DQN.
-	_, loss = sess.run([train_q_network, objective_fn], {pixels_placeholder: pixels_batch, action_rewards_placeholder: rewards, action_selected_placeholder: actions_selected_batch, coordinate_placeholder: coordinates_batch})
+	discrim_real_placeholder, discrim_fake_placeholder = env.get_discrim_placeholders()
+	real_values, fake_values = env.get_discrim_placeholder_values()
+	print("real and fake")
+	print(real_values)
+	print(fake_values)
+	real_loss, fake_loss = env.discrim_loss_tensors()
+	print(real_loss)
+	d_r_loss, d_f_loss, summary, _, loss = sess.run([real_loss, fake_loss, merged, train_q_network, objective_fn], {pixels_placeholder: pixels_batch, action_rewards_placeholder: rewards, action_selected_placeholder: actions_selected_batch, coordinate_placeholder: coordinates_batch, discrim_real_placeholder: real_values, discrim_fake_placeholder: fake_values})
+	print("Real loss: " + str(d_r_loss))
+	print("Fake loss: " + str(d_f_loss))
 	print("DQN Loss: " + str(loss))
 	if loss > 50:
 		print("Retraining on batch because of high loss")
 		_, loss = sess.run([train_q_network, objective_fn], {pixels_placeholder: pixels_batch, action_rewards_placeholder: rewards, action_selected_placeholder: actions_selected_batch, coordinate_placeholder: coordinates_batch})
 		print("Retrained loss: " + str(loss))
-	# train_writer.add_summary(summary, i)
-	print("")
+	if i % 10 == 0:
+		train_writer.add_summary(summary, i)
 	print("Episode finished. Rendering:")
 	env.render()
 

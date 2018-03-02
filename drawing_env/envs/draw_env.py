@@ -13,7 +13,7 @@ NUM_POSSIBLE_PIXEL_VALUES = 3
 REWARD_FACTOR = 2
 
 class DrawEnv(Env):
-	def __init__(self, dimension=6):
+	def __init__(self, dimension=4):
 		# Dimensions of the drawing. Note that the drawing will always be
 		# a square, so the dimension is both the height and the width.
 		self.dimension = dimension
@@ -34,11 +34,13 @@ class DrawEnv(Env):
 
 		self._reset_pixel_values()
 
-		self.sess = tf.Session()
-		self.rl_discriminator = RLDiscriminator(self.sess, dimension, dimension, 1)
 		self.last_real_prob = 0
 		self.last_fake_prob = 0
 		self.coordinate = 0
+
+	def set_session(self, sess):
+		self.sess = sess
+		self.rl_discriminator = RLDiscriminator(self.sess, self.dimension, self.dimension, 1)
 
 	def render(self, mode='human'):
 		# TODO: Write this out to an actual file, and convert the pixel values to a format
@@ -97,6 +99,9 @@ class DrawEnv(Env):
 
 		return next_state_batch, rewards, num_unfilled_pixels == 0, {}
 
+	def discrim_loss_tensors(self):
+		return self.rl_discriminator.loss_tensors()
+
 	def train_disc_random_fake(self):
 		rand_fake = np.random.randint(2,4,(self.dimension*self.dimension))
 		num_zeroed_out = np.random.randint(0, self.dimension*self.dimension)
@@ -123,6 +128,11 @@ class DrawEnv(Env):
 		fake_prob, _ = self.rl_discriminator.get_disc_loss(copy, num_zeroed_out, True)
 		return None, self._compute_reward(fake_prob[0][0], 0), False, {} 
 
+	def get_discrim_placeholders(self):
+		return self.rl_discriminator.get_real_placeholder(), self.rl_discriminator.get_fake_placeholder()
+
+	def get_discrim_placeholder_values(self):
+		return self.rl_discriminator.get_real_batch(0), self.rl_discriminator.get_fake_batch(self.pixel_values, 0)
 
 	def step(self, a):
 		assert a < NUM_POSSIBLE_PIXEL_VALUES, "Pixel value for an action must fall in range: [0," + str(NUM_POSSIBLE_PIXEL_VALUES-1) + "]. Current invalid action: " + str(a)
