@@ -102,7 +102,7 @@ class DrawEnv(Env):
 		copy = np.copy(self.pixel_values)
 		copy[self.coordinate] = a + 2
 
-		num_zeroed_out = copy.size - self.coordinate
+		num_zeroed_out = copy.size - self.coordinate - 1
 
 		print("Testing disc with taking try action " + str(a+2) + " at coordinate: " + str(self.coordinate))
 		fake_prob, _ = self.rl_discriminator.get_disc_loss(copy, self.number, num_zeroed_out, True)
@@ -127,7 +127,7 @@ class DrawEnv(Env):
 		self.coordinate += 1
 
 		done = self.coordinate == self.dimension*self.dimension
-		num_zeroed_out = self.pixel_values.size - self.coordinate
+		num_zeroed_out = self.pixel_values.size - self.coordinate - 1
 		if (self.last_fake_prob > 0.1 or self.last_real_prob < 0.9):
 			print("Actually training Disc")
 			self.last_fake_prob, self.last_real_prob = self.rl_discriminator.train(self.pixel_values, self.number, num_zeroed_out, True)

@@ -16,8 +16,6 @@ NUM_STATES = LOCAL_DIMENSION*LOCAL_DIMENSION
 EPISODE_LENGTH = FULL_DIMENSION*FULL_DIMENSION*2
 
 NUM_POSSIBLE_PIXEL_COLORS = 2
-EPSILON_GREEDY_START = 0.25
-EPSILON_GREEDY_PER_EPISODE_DECAY = 0.9999
 
 env = gym.make('DrawEnv-v0')
 
@@ -117,9 +115,6 @@ train_writer = tf.summary.FileWriter('tensorboard/',
 # Initialize TF graph.
 sess.run(tf.global_variables_initializer())
 
-# Initialize epsilon greedy.
-epsilon_greedy = EPSILON_GREEDY_START
-
 # First train discriminator 100 iterations.
 real_prob = 0.5
 fake_prob = 0.5
@@ -132,7 +127,6 @@ action_count = {}
 
 # Training.
 for i in xrange(NUM_EPISODES):
-	tf.summary.scalar("epsilon greedy", epsilon_greedy)
 	print("Episode num: " + str(i))
 	curr_state = env.reset()
 	episode_done = False
@@ -220,6 +214,7 @@ for i in xrange(NUM_EPISODES):
 	pixels_batch = pixels_batch[random_order]
 	coordinates_batch = coordinates_batch[random_order]
 	actions_selected_batch = actions_selected_batch[random_order]
+	numbers_batch = numbers_batch[random_order]
 	# Given the reward, train our DQN.
 	discrim_real_placeholder, discrim_real_label_placeholder, discrim_fake_placeholder, discrim_fake_label_placeholder = env.get_discrim_placeholders()
 	real_values, real_labels, fake_values, fake_labels = env.get_discrim_placeholder_values()
@@ -250,7 +245,4 @@ for i in xrange(NUM_EPISODES):
 		env.render()
 		print("--------------------")
 		print("--------------------")
-
-	# Decay epsilon greedy value
-	epsilon_greedy *= EPSILON_GREEDY_PER_EPISODE_DECAY
 
