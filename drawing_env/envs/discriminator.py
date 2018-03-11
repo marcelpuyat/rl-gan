@@ -17,13 +17,21 @@ class RLDiscriminator(object):
     def get_fake_placeholder(self):
         return self.fake_input_images
 
+    def get_fake_label_placeholder(self):
+        return self.fake_input_labels
+
     def get_real_placeholder(self):
         return self.real_input_images
 
-    def get_fake_batch(self, fake_image, num_zeroed_out):
+    def get_real_label_placeholder(self):
+        return self.real_input_labels
+
+    def get_fake_batch(self, fake_image, label, num_zeroed_out):
         fake_batch = np.zeros((1, self.input_height * self.input_width))  # TODO: Somehow do batches for fake images as well...
         fake_batch[0] = fake_image
-        return fake_batch
+        label_batch = np.zeros((1, 1))
+        label_batch[0] = label
+        return fake_batch, label_batch
 
     def get_real_batch(self, num_zeroed_out):
         return self._get_next_real_batch(num_zeroed_out)
@@ -35,11 +43,13 @@ class RLDiscriminator(object):
     # loss. Returns the probability the model assigned to the fake image. The closer this value
     # is to 1, this means the model is getting tricked by the fake_image into thinking it's a
     # real image.
-    def train(self, fake_image, num_zeroed_out, debug=False):
-        real_batch = self._get_next_real_batch(num_zeroed_out)
+    def train(self, fake_image, fake_label, num_zeroed_out, debug=False):
+        real_batch, labels = self._get_next_real_batch(num_zeroed_out)
         fake_batch = np.zeros((1, self.input_height * self.input_width))  # TODO: Somehow do batches for fake images as well...
         fake_batch[0] = fake_image
-        _, real_loss, real_prob, fake_loss, fake_prob = self.sess.run([self.train_disc, self.disc_real_loss, self.discriminator_real_probability, self.disc_fake_loss, self.discriminator_fake_probability], {self.real_input_images: real_batch, self.fake_input_images: fake_batch})
+        fake_label_batch = np.zeros((1, 1))
+        fake_label_batch[0] = fake_label
+        _, real_loss, real_prob, fake_loss, fake_prob = self.sess.run([self.train_disc, self.disc_real_loss, self.discriminator_real_probability, self.disc_fake_loss, self.discriminator_fake_probability], {self.real_input_images: real_batch, self.real_input_labels: labels, self.fake_input_images: fake_batch, self.fake_input_labels: fake_label_batch})
         if debug:
             print("Disc loss")
             print("\tReal loss: " + str(real_loss))
@@ -52,11 +62,13 @@ class RLDiscriminator(object):
     def get_disc_loss_batch(self, fake_images, debug=False):
         return self.sess.run([self.disc_fake_loss], {self.fake_input_images: fake_images})
 
-    def get_disc_loss(self, fake_image, num_zeroed_out, debug=False):
-        real_batch = self._get_next_real_batch(num_zeroed_out)
+    def get_disc_loss(self, fake_image, fake_label, num_zeroed_out, debug=False):
+        real_batch, labels = self._get_next_real_batch(num_zeroed_out)
         fake_batch = np.zeros((1, self.input_height * self.input_width))  # TODO: Somehow do batches for fake images as well...
         fake_batch[0] = fake_image
-        real_loss, real_prob, fake_loss, fake_prob = self.sess.run([self.disc_real_loss, self.discriminator_real_probability, self.disc_fake_loss, self.discriminator_fake_probability], {self.real_input_images: real_batch, self.fake_input_images: fake_batch})
+        fake_label_batch = np.zeros((1, 1))
+        fake_label_batch[0] = fake_label
+        real_loss, real_prob, fake_loss, fake_prob = self.sess.run([self.disc_real_loss, self.discriminator_real_probability, self.disc_fake_loss, self.discriminator_fake_probability], {self.real_input_images: real_batch, self.real_input_labels: labels, self.fake_input_images: fake_batch, self.fake_input_labels: fake_label_batch})
         if debug:
             print("Disc loss, not training")
             print("\tReal loss: " + str(real_loss))
@@ -69,10 +81,12 @@ class RLDiscriminator(object):
     # Set up all the tensors for training.
     def _build_discriminator_model(self):
         self.real_input_images = tf.placeholder(tf.float32, shape=[None, self.input_height*self.input_width], name='real_input_images')
+        self.real_input_labels = tf.placeholder(tf.float32, shape=[None, 1], name='real_input_labels')
         self.fake_input_images = tf.placeholder(tf.float32, shape=[None, self.input_height*self.input_width], name='fake_input_images')
+        self.fake_input_labels = tf.placeholder(tf.float32, shape=[None, 1], name='fake_input_labels')
 
-        self.discriminator_real_probability, discriminator_real_logits = self._discriminator(self.real_input_images)
-        self.discriminator_fake_probability, discriminator_fake_logits = self._discriminator(self.fake_input_images, reuse=True)
+        self.discriminator_real_probability, discriminator_real_logits = self._discriminator(self.real_input_images, self.real_input_labels)
+        self.discriminator_fake_probability, discriminator_fake_logits = self._discriminator(self.fake_input_images, self.fake_input_labels, reuse=True)
 
         # To understand these, it's best to look at the objective function of the basic Goodfellow GAN paper.
         # TODO: Use a more sophisticated loss function with gaussian noise added, etc.
@@ -90,12 +104,14 @@ class RLDiscriminator(object):
 
     def _get_next_real_batch(self, num_zeroed_out):
         batch = np.zeros((self.batch_size, self.input_height * self.input_width))
+        labels = np.zeros((self.batch_size, 1))
         for i in xrange(self.batch_size):
-            image = self._get_next_real_image()
+            image, label = self._get_next_real_image()
             if num_zeroed_out != 0:
                 image[-num_zeroed_out:] = 1
             batch[i] = image
-        return batch
+            labels[i] = label
+        return batch, labels
 
     def _get_next_real_image(self):
         # return np.array([1, 1,\
@@ -103,22 +119,22 @@ class RLDiscriminator(object):
         # return np.array([2, 2, 2,\
         #                  2, 3, 2,\
         #                  2, 2, 2])
-        rand_num = np.random.randint(0, 3)
-        if rand_num == 0:
-            return np.array([3, 3, 3, 3,\
-                             3, 2, 2, 3,\
-                             3, 2, 2, 3,\
-                             3, 3, 3, 3])
-        if rand_num == 1:
-            return np.array([2, 2, 2, 3,\
-                             2, 2, 2, 3,\
-                             2, 2, 2, 3,\
-                             2, 2, 2, 3])
-        if rand_num == 2:
-            return np.array([3, 3, 3, 3,\
-                             2, 2, 2, 3,\
-                             2, 2, 2, 3,\
-                             2, 2, 2, 3])
+        # rand_num = np.random.randint(0, 3)
+        # if rand_num == 0:
+        #     return np.array([3, 3, 3, 3,\
+        #                      3, 2, 2, 3,\
+        #                      3, 2, 2, 3,\
+        #                      3, 3, 3, 3])
+        # if rand_num == 1:
+        #     return np.array([2, 2, 2, 3,\
+        #                      2, 2, 2, 3,\
+        #                      2, 2, 2, 3,\
+        #                      2, 2, 2, 3])
+        # if rand_num == 2:
+        #     return np.array([3, 3, 3, 3,\
+        #                      2, 2, 2, 3,\
+        #                      2, 2, 2, 3,\
+        #                      2, 2, 2, 3])
         # rand_num = np.random.randint(0, 7)
         # if rand_num == 0 or rand_num == 6:
         #     return np.array([2, 2, 3, 2, 2,\
@@ -164,52 +180,52 @@ class RLDiscriminator(object):
         #                      2, 1, 1, 1, 1, 2,\
         #                      2, 2, 2, 2, 2, 2])
         # else:
-        # rand_num = np.random.randint(0, 6)
-        # if rand_num == 0:
-        #     return np.array([3, 3, 2, 2, 3, 3,\
-        #                      3, 3, 2, 2, 3, 3,\
-        #                      3, 3, 2, 2, 3, 3,\
-        #                      3, 3, 2, 2, 3, 3,\
-        #                      3, 3, 2, 2, 3, 3,\
-        #                      3, 3, 2, 2, 3, 3])
-        # elif rand_num == 1:
-        #     return np.array([2, 2, 2, 2, 2, 2,\
-        #                      3, 3, 3, 3, 3, 2,\
-        #                      2, 2, 2, 2, 2, 2,\
-        #                      2, 2, 2, 2, 2, 2,\
-        #                      2, 3, 3, 3, 3, 3,\
-        #                      2, 2, 2, 2, 2, 2])
-        # elif rand_num == 2:
-        #     return np.array([2, 2, 2, 2, 2, 2,\
-        #                      3, 3, 2, 2, 3, 2,\
-        #                      2, 2, 2, 2, 2, 2,\
-        #                      2, 2, 2, 2, 2, 2,\
-        #                      3, 3, 3, 3, 3, 2,\
-        #                      2, 2, 2, 2, 2, 2])
-        # elif rand_num == 3:
-        #     return np.array([2, 2, 3, 3, 2, 2,\
-        #                      2, 2, 3, 3, 2, 2,\
-        #                      2, 2, 2, 2, 2, 2,\
-        #                      2, 2, 2, 2, 2, 2,\
-        #                      3, 3, 3, 3, 2, 2,\
-        #                      3, 3, 3, 3, 2, 2])
-        # elif rand_num == 4:
-        #     return np.array([2, 2, 2, 2, 2, 2,\
-        #                      2, 3, 3, 3, 3, 3,\
-        #                      2, 2, 2, 2, 2, 2,\
-        #                      2, 2, 2, 2, 2, 2,\
-        #                      3, 3, 3, 3, 3, 2,\
-        #                      2, 2, 2, 2, 2, 2])
-        # elif rand_num == 5:
-        #     return np.array([2, 2, 2, 2, 2, 2,\
-        #                      2, 3, 3, 3, 3, 3,\
-        #                      2, 3, 3, 3, 3, 3,\
-        #                      2, 2, 2, 2, 2, 2,\
-        #                      2, 3, 3, 3, 3, 2,\
-        #                      2, 2, 2, 2, 2, 2]) 
+        rand_num = np.random.randint(0, 6)
+        if rand_num == 0:
+            return np.array([3, 3, 2, 2, 3, 3,\
+                             3, 3, 2, 2, 3, 3,\
+                             3, 3, 2, 2, 3, 3,\
+                             3, 3, 2, 2, 3, 3,\
+                             3, 3, 2, 2, 3, 3,\
+                             3, 3, 2, 2, 3, 3]), 1
+        elif rand_num == 1:
+            return np.array([2, 2, 2, 2, 2, 2,\
+                             3, 3, 3, 3, 3, 2,\
+                             2, 2, 2, 2, 2, 2,\
+                             2, 2, 2, 2, 2, 2,\
+                             2, 3, 3, 3, 3, 3,\
+                             2, 2, 2, 2, 2, 2]), 2
+        elif rand_num == 2:
+            return np.array([2, 2, 2, 2, 2, 2,\
+                             3, 3, 3, 3, 3, 2,\
+                             2, 2, 2, 2, 2, 2,\
+                             2, 2, 2, 2, 2, 2,\
+                             3, 3, 3, 3, 3, 2,\
+                             2, 2, 2, 2, 2, 2]), 3
+        elif rand_num == 3:
+            return np.array([2, 2, 3, 3, 2, 2,\
+                             2, 2, 3, 3, 2, 2,\
+                             2, 2, 2, 2, 2, 2,\
+                             2, 2, 2, 2, 2, 2,\
+                             3, 3, 3, 3, 2, 2,\
+                             3, 3, 3, 3, 2, 2]), 4
+        elif rand_num == 4:
+            return np.array([2, 2, 2, 2, 2, 2,\
+                             2, 3, 3, 3, 3, 3,\
+                             2, 2, 2, 2, 2, 2,\
+                             2, 2, 2, 2, 2, 2,\
+                             3, 3, 3, 3, 3, 2,\
+                             2, 2, 2, 2, 2, 2]), 5
+        elif rand_num == 5:
+            return np.array([2, 2, 2, 2, 2, 2,\
+                             2, 3, 3, 3, 3, 3,\
+                             2, 3, 3, 3, 3, 3,\
+                             2, 2, 2, 2, 2, 2,\
+                             2, 3, 3, 3, 3, 2,\
+                             2, 2, 2, 2, 2, 2]), 6
 
     # Build the discriminator model and return the output tensor and the logits tensor.
-    def _discriminator(self, image, reuse=False):
+    def _discriminator(self, image, label, reuse=False):
         with tf.variable_scope("discriminator") as scope:
             if reuse:
                 scope.reuse_variables()
@@ -221,7 +237,8 @@ class RLDiscriminator(object):
             h1 = lrelu(conv2d(h0, 8, 2, 2, 1, 1, name="conv2"))
             h2 = lrelu(conv2d(h1, 16, 2, 2, 1, 1, name="conv3"))
             h2_flatted = tf.reshape(h2, [batch_size, self.input_height * self.input_width * 16])
-            h3 = dense(h2_flatted, self.input_height * self.input_width * 2, name='dense1')
+            concated = tf.concat([label, h2_flatted], axis=1)
+            h3 = dense(concated, self.input_height * self.input_width * 2, name='dense1')
             h4 = dense(h3, 1, name='dense2')
 
             return tf.nn.sigmoid(h4), h4
