@@ -8,8 +8,7 @@ def conv2d(input_, output_dim, kernel_h=5, kernel_w=5, stride_h=2, stride_w=2, s
 		conv = tf.nn.conv2d(input_, w, strides=[1, stride_h, stride_w, 1], padding='SAME')
 
 		biases = tf.get_variable('biases', [output_dim], initializer=tf.constant_initializer(0.0))
-		conv = tf.reshape(tf.nn.bias_add(conv, biases), conv.get_shape())
-
+		conv = tf.nn.bias_add(conv, biases)
 		return conv
 
 def lrelu(x, leak=0.2, name="lrelu"):
@@ -22,7 +21,6 @@ def dense(input, output_dim, stddev=0.02, name='dense'):
 						initializer=tf.random_normal_initializer(stddev=stddev))
 		b = tf.get_variable('denseb', [output_dim],
 							initializer=tf.zeros_initializer())
-		tf.summary.histogram("weights", W)
 		return tf.matmul(input, W) + b
 
 def gaussian_noise_layer(input, noise_std=0.2):
