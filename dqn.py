@@ -1,69 +1,12 @@
+from config import *
+from utils import * 
 import gym
 import drawing_env
 from drawing_env.envs.ops import *
 import numpy as np
 import tensorflow as tf
-import math
-
-BETA1 = 0.5
-LEARNING_RATE = 5e-3
-BATCH_SIZE = 1
-LOCAL_DIMENSION = 3
-FULL_DIMENSION = 6
-
-NUM_EPISODES = 100000
-NUM_STATES = LOCAL_DIMENSION*LOCAL_DIMENSION
-EPISODE_LENGTH = FULL_DIMENSION*FULL_DIMENSION*2
-
-NUM_POSSIBLE_PIXEL_COLORS = 2
 
 env = gym.make('DrawEnv-v0')
-
-# This returns a LOCAL_DIMxLOCAL_DIM area around the given coordinate, mirroring pixels when we are on the edge.
-# Haven't tried simply using zero padding.
-def get_local_pixels(all_pixels, coord):
-	reshaped = all_pixels.reshape((FULL_DIMENSION, FULL_DIMENSION))
-	x_coord = coord % FULL_DIMENSION
-	y_coord = int(coord) / FULL_DIMENSION
-	local_pix = np.zeros((LOCAL_DIMENSION, LOCAL_DIMENSION))
-
-	prev_row = y_coord-(LOCAL_DIMENSION-2)
-	prev_col = x_coord-(LOCAL_DIMENSION-2)
-	next_row = y_coord+(LOCAL_DIMENSION-2)
-	next_col = x_coord+(LOCAL_DIMENSION-2)
-
-	local_pix = np.zeros((LOCAL_DIMENSION,LOCAL_DIMENSION))
-	padded_pixels = np.zeros((FULL_DIMENSION+(LOCAL_DIMENSION-2)*2, FULL_DIMENSION+(LOCAL_DIMENSION-2)*2))
-	padded_pixels[1:FULL_DIMENSION+1,1:FULL_DIMENSION+1] = reshaped[:,:]
-
-	# Check if we have to mirror the edges
-	left_padding = x_coord
-	if left_padding == 0:
-		padded_pixels[prev_row+1:next_row+2,0] = padded_pixels[prev_row+1:next_row+2,2]
-	right_padding = FULL_DIMENSION - 1 - (x_coord)
-	if right_padding == 0:
-		padded_pixels[prev_row+1:next_row+2,FULL_DIMENSION+(LOCAL_DIMENSION-2)*2 - 1] = padded_pixels[prev_row+1:next_row+2,FULL_DIMENSION+(LOCAL_DIMENSION-2)*2 - 3]
-	top_padding = y_coord
-	if top_padding == 0:
-		padded_pixels[0,prev_col+1:next_col+2] = padded_pixels[2,prev_col+1:next_col+2]
-	bottom_padding = FULL_DIMENSION - 1 - (y_coord)
-	if bottom_padding == 0:
-		padded_pixels[FULL_DIMENSION+(LOCAL_DIMENSION-2)*2 - 1,prev_col+1:next_col+2] = padded_pixels[FULL_DIMENSION+(LOCAL_DIMENSION-2)*2 - 3,prev_col+1:next_col+2]
-
-
-	# Check for corner cases
-	if left_padding == 0 and bottom_padding == 0:
-		padded_pixels[FULL_DIMENSION+(LOCAL_DIMENSION-2)*2-1][0] = reshaped[FULL_DIMENSION-2][1]
-	elif right_padding == 0 and bottom_padding == 0:
-		padded_pixels[FULL_DIMENSION+(LOCAL_DIMENSION-2)*2-1][FULL_DIMENSION+(LOCAL_DIMENSION-2)*2-1] = reshaped[FULL_DIMENSION-2][FULL_DIMENSION-2]
-	elif right_padding == 0 and top_padding == 0:
-		padded_pixels[0][FULL_DIMENSION+(LOCAL_DIMENSION-2)*2-1] = reshaped[1][FULL_DIMENSION-2]
-	elif left_padding == 0 and top_padding == 0:
-		padded_pixels[0][0] = reshaped[1][1]
-
-	local_pix[:,:] = padded_pixels[prev_row+1:next_row+2,prev_col+1:next_col+2]
-
-	return local_pix.flatten()
 
 # DQN Architecture.
 def deep_q_network(pixels, coordinate, number, num_actions_per_pixel):
@@ -180,7 +123,7 @@ for i in xrange(NUM_EPISODES):
 
 			# Annealing based on state. We want some sort of log/sqrt type function that increases random prob chance as we move on to later coordinates (since we usually are easily able to learn to do well for the earlier ones).
 			# Mostly just fiddled with these constants.
-			state_annealing = math.sqrt((FULL_DIMENSION*FULL_DIMENSION - curr_state['coordinate'])*5)
+			state_annealing = np.sqrt((FULL_DIMENSION*FULL_DIMENSION - curr_state['coordinate'])*5)
 			if state_annealing == 0:
 				state_annealing = 1
 
