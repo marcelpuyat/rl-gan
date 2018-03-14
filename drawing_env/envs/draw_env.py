@@ -40,7 +40,8 @@ class DrawEnv(Env):
 		self.coordinate = 0
 
 		# The actual number the agent is trying to draw.
-		self.number = random.randint(1, 6)
+                self.digits = range(1,6)
+                self.number = np.random.choice(self.digits)
 
 	def set_session(self, sess):
 		self.sess = sess
@@ -82,6 +83,14 @@ class DrawEnv(Env):
 
 		return {'number': self.number, 'pixels': np.copy(self.pixel_values), 'coordinate': self.coordinate}
 
+        # Reset, but deterministically choose the digit we wish to generate
+        def reset_to_selected_digit(self, digit):
+                self.reset()
+                assert digit in self.digits, 'Selected digit must fall in range [{}, {}], inclusive'\
+                                             .format(min(self.digits), max(self.digits))
+                self.number = digit
+                return {'number': self.number, 'pixels': np.copy(self.pixel_values), 'coordinate': self.coordinate}
+        
 	def discrim_loss_tensors(self):
 		return self.rl_discriminator.loss_tensors()
 
@@ -90,7 +99,7 @@ class DrawEnv(Env):
 		num_zeroed_out = np.random.randint(0, self.dimension*self.dimension)
 		if num_zeroed_out != 0:
 			rand_fake[-num_zeroed_out:] = 1
-		fake_prob, real_prob = self.rl_discriminator.train(rand_fake, random.randint(1, 6), num_zeroed_out, True)
+		fake_prob, real_prob = self.rl_discriminator.train(rand_fake, random.randint(1, 6), num_zeroed_out, debug=False)
 		return fake_prob, real_prob
 
 	# This is used to see what reward one would get by trying a given action from the current state
@@ -104,8 +113,8 @@ class DrawEnv(Env):
 
 		num_zeroed_out = copy.size - self.coordinate - 1
 
-		print("Testing disc with taking try action " + str(a+2) + " at coordinate: " + str(self.coordinate))
-		fake_prob, _ = self.rl_discriminator.get_disc_loss(copy, self.number, num_zeroed_out, True)
+#		print("Testing disc with taking try action " + str(a+2) + " at coordinate: " + str(self.coordinate))
+		fake_prob, _ = self.rl_discriminator.get_disc_loss(copy, self.number, num_zeroed_out, debug=False)
 		return None, self._compute_reward(fake_prob[0][0], 0), False, {} 
 
 	def get_discrim_placeholders(self):
@@ -123,17 +132,17 @@ class DrawEnv(Env):
 		# Set the pixel value in our state based on the action.
 		self.pixel_values[self.coordinate] = a + 2
 
-		print("Testing disc with taking real action " + str(a+2) + " at coordinate: " + str(self.coordinate))
+#		print("Testing disc with taking real action " + str(a+2) + " at coordinate: " + str(self.coordinate))
 		self.coordinate += 1
 
 		done = self.coordinate == self.dimension*self.dimension
 		num_zeroed_out = self.pixel_values.size - self.coordinate - 1
 		if (self.last_fake_prob > 0.1 or self.last_real_prob < 0.9):
-			print("Actually training Disc")
-			self.last_fake_prob, self.last_real_prob = self.rl_discriminator.train(self.pixel_values, self.number, num_zeroed_out, True)
+			#print("Actually training Disc")
+			self.last_fake_prob, self.last_real_prob = self.rl_discriminator.train(self.pixel_values, self.number, num_zeroed_out, debug=False)
 		else:
-			print("Not training Disc")
-			self.last_fake_prob, self.last_real_prob = self.rl_discriminator.get_disc_loss(self.pixel_values, self.number, num_zeroed_out, True)
+			#print("Not training Disc")
+			self.last_fake_prob, self.last_real_prob = self.rl_discriminator.get_disc_loss(self.pixel_values, self.number, num_zeroed_out, debug=False)
 
 		return {'number': self.number, 'pixels': np.copy(self.pixel_values), 'coordinate': self.coordinate}, self._compute_reward(self.last_fake_prob[0][0], 0), done, {}
 

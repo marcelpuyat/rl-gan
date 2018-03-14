@@ -50,10 +50,10 @@ class RLDiscriminator(object):
         fake_label_batch = np.zeros((1, 1))
         fake_label_batch[0] = fake_label
         _, real_loss, real_prob, fake_loss, fake_prob = self.sess.run([self.train_disc, self.disc_real_loss, self.discriminator_real_probability, self.disc_fake_loss, self.discriminator_fake_probability], {self.real_input_images: real_batch, self.real_input_labels: labels, self.fake_input_images: fake_batch, self.fake_input_labels: fake_label_batch})
-
-        print("Training")
-        print("Real image: " + str(real_batch[0]))
-        print("Real label: " + str(labels[0]))
+        if debug:
+            print("Training")
+            print("Real image: " + str(real_batch[0]))
+            print("Real label: " + str(labels[0]))
 
         if debug:
             print("Disc loss")
