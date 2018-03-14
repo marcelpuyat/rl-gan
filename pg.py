@@ -11,7 +11,7 @@ import tensorflow as tf
 # TODO: Try different architecture?
 def policy_network(pixels, coordinate, number, num_actions_per_pixel):
   batch_size = tf.shape(pixels)[0]
-  reshaped_input = tf.reshape(pixels, tf.stack([batch_size, LOCAL_DIMENSION, LOCAL_DIMENSION, 1]))
+  reshaped_input = tf.reshape(pixels, tf.stack([batch_size, FULL_DIMENSION, FULL_DIMENSION, 1]))
     
   h0 = lrelu(conv2d(reshaped_input, 4, 2, 2, 1, 1, name="conv1"))
   h1 = lrelu(conv2d(h0, 8, 2, 2, 1, 1, name="conv2"))
@@ -35,7 +35,7 @@ class DrawPG(object):
   """
   # TODO: instantiate with digit, remove numbers placeholder?
   # TODO: Remove coordinate placeholder?
-  def __init__(self, digit, env, output_path, model_path, log_path, gamma=1, lr=LEARNING_RATE,
+  def __init__(self, digit, env, output_path, model_path, log_path, gamma=1, lr=PG_LR,
                use_baseline=True, normalize_advantage=True, batch_size=PG_BATCH_NSTEPS,
                num_batches=PG_NUM_BATCHES, summary_freq=PG_SUMMARY_FREQ):
     """
@@ -74,7 +74,7 @@ class DrawPG(object):
     Adds placeholders to the graph
     Set up the observation, action, and advantage placeholder
     """
-    self.pixels_placeholder = tf.placeholder(tf.float32, shape=(None, LOCAL_DIMENSION*LOCAL_DIMENSION),
+    self.pixels_placeholder = tf.placeholder(tf.float32, shape=(None, FULL_DIMENSION*FULL_DIMENSION),
                                              name='pixel_window')
     self.coordinate_placeholder = tf.placeholder(tf.float32, shape=(None,), name='current_coordinate')
     self.number_placeholder = tf.placeholder(tf.float32, shape=(None,), name='digit')
@@ -278,7 +278,8 @@ class DrawPG(object):
       # fill out a full image
       for step in range(FULL_DIMENSION*FULL_DIMENSION):
         full_image, crd, nm = state['pixels'], state['coordinate'], state['number']
-        px = get_local_pixels(full_image, crd, window_size=LOCAL_DIMENSION)
+        px = full_image
+#        px = get_local_pixels(full_image, crd, window_size=LOCAL_DIMENSION)
         pixels.append(px)
         coords.append(crd)
         numbers.append(nm)
@@ -287,7 +288,6 @@ class DrawPG(object):
         action = self.sess.run(self.sampled_action, feed_dict={self.pixels_placeholder: px[None,:],
                                                                self.coordinate_placeholder: [crd],
                                                                self.number_placeholder: [nm]})
-
         state, reward, done, info = env.step(action) # TODO: try stepping with sparse rewards
         actions.append(action)
         rewards.append(reward)

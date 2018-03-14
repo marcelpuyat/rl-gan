@@ -55,9 +55,9 @@ class DrawEnv(Env):
 		self._print_pixels(self.pixel_values)
 
 	def render_val(self, val):
-		if val == 2:
+		if val == 1:
 			return "-"
-		if val == 3:
+		if val == 2:
 			return "*"
 
 	def _print_pixels(self, pixels):
@@ -109,7 +109,7 @@ class DrawEnv(Env):
 		assert a >= 0, "Pixel value for an action must fall in range: [0," + str(NUM_POSSIBLE_PIXEL_VALUES-1) + "]. Current invalid action: " + str(a)
 
 		copy = np.copy(self.pixel_values)
-		copy[self.coordinate] = a + 2
+		copy[self.coordinate] = a + 1
 
 		num_zeroed_out = copy.size - self.coordinate - 1
 
@@ -130,7 +130,7 @@ class DrawEnv(Env):
 		assert a >= 0, "Pixel value for an action must fall in range: [0," + str(NUM_POSSIBLE_PIXEL_VALUES-1) + "]. Current invalid action: " + str(a)
 
 		# Set the pixel value in our state based on the action.
-		self.pixel_values[self.coordinate] = a + 2
+		self.pixel_values[self.coordinate] = a + 1
 
 #		print("Testing disc with taking real action " + str(a+2) + " at coordinate: " + str(self.coordinate))
 		self.coordinate += 1
@@ -149,7 +149,7 @@ class DrawEnv(Env):
 	def _reset_pixel_values(self):
 		# The actual pixel values of the drawing. We start out with all values
 		# equal to zero, meaning none of the pixel colors have been selected yet.
-		self.pixel_values = np.full(self.dimension*self.dimension, 1)
+		self.pixel_values = np.full(self.dimension*self.dimension, 0)
 
 	# The reward is a function of how much we were able to trick the discriminator (i.e. how
 	# high the fake_prob is) and how many pixels had to be filled in.
