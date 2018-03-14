@@ -17,7 +17,20 @@ def get_local_pixels(all_pixels, coord, window_size=LOCAL_DIMENSION,
     radius_l = (window_size-1)/2
     radius_u = window_size/2
     im_pad = np.pad(vec_to_im(all_pixels), pad_width=radius_u, mode=padding_style, **kwargs)
+#    print(all_pixels)
+#    print('')
+#    print(vec_to_im(all_pixels))
+#    print('')
+#    print(im_pad)
+#    print('')
     x, y = index_to_xy(coord)
-    window = im_pad[y-l_radius:y+r_radius+1, x-l_radius:x+r_radius+1]
+    x += radius_l; y += radius_l # to access (i,j) of original image, add radius_l to coords in im_pad
+ #   print(x)
+ #   print(y)
+ #   print(radius_l)
+ #   print(radius_u)
+    window = im_pad[y-radius_l:y+radius_u+1, x-radius_l:x+radius_u+1]
+ #   print(window)
+ #   print('')
     return window.flatten()
     

@@ -6,9 +6,8 @@ from drawing_env.envs.ops import *
 import numpy as np
 import tensorflow as tf
 
-env = gym.make('DrawEnv-v0')
-
 # Policy gradient architecture. Return logits for each action's probability
+# TODO: Try different architecture?
 def policy_network(pixels, coordinate, number, num_actions_per_pixel):
   batch_size = tf.shape(pixels)[0]
   reshaped_input = tf.reshape(pixels, tf.stack([batch_size, LOCAL_DIMENSION, LOCAL_DIMENSION, 1]))
@@ -18,7 +17,7 @@ def policy_network(pixels, coordinate, number, num_actions_per_pixel):
   h2 = lrelu(conv2d(h1, 16, 2, 2, 1, 1, name="conv3"))
   h2_flatted = tf.flatten(h2)
     
-  # Append coordinate and number label to last layer because we don't want it to be convoluted with
+  # Append coordinate and number label to last layer because we don't want it to be convolved with
   # the pixel values.
   h3 = tf.contrib.layers.fully_connected(tf.concat([h2_flatted, coordinate, number], axis=1),
                                          FULL_DIMENSION*FULL_DIMENSION, name='dense1')
@@ -28,13 +27,15 @@ def policy_network(pixels, coordinate, number, num_actions_per_pixel):
   return output
 
 
-class PG(object):
+class DrawPG(object):
   """
   Abstract Class for implementing a Policy Gradient Based Algorithm
   """
-  def __init__(self, env, output_path, model_path, log_path, lr=LEARNING_RATE,
-               use_baseline=True, normalize_advantage=True, batch_size=BATCH_SIZE,
-               summary_freq=PG_SUMMARY_FREQ):
+  # TODO: instantiate with digit, remove numbers placeholder?
+  # TODO: Remove coordinate placeholder?
+  def __init__(self, digit, env, output_path, model_path, log_path, gamma=1, lr=LEARNING_RATE,
+               use_baseline=True, normalize_advantage=True, batch_size=PG_BATCH_NSTEPS,
+               num_batches=PG_NUM_BATCHES, summary_freq=PG_SUMMARY_FREQ):
     """
     Initialize Policy Gradient Class
   
@@ -42,11 +43,6 @@ class PG(object):
             env: the open-ai environment
             config: class with hyperparameters
             logger: logger instance from logging module
-
-    You do not need to implement anything in this function. However,
-    you will need to use self.discrete, self.observation_dim,
-    self.action_dim, and self.lr in other methods.
-    
     """
     # directory for training outputs
     if not os.path.exists(output_path):
@@ -55,14 +51,23 @@ class PG(object):
       os.makedirs(model_path)
             
     # store hyper-params
-    self.config = config
-    self.logger = get_logger(config.log_path)
+    self.digit = digit
     self.env = env
 
-    # action dim
-    # discrete action space or continuous action space
-    self.action_dim = self.env.action_space.n # TODO: ensure this works
+    self.output_path = output_path
+    self.model_path = model_path
+    self.logger = get_logger(log_path)
+    self.gamma = gamma
     self.lr = lr
+    self.use_baseline = use_baseline
+    self.normalize_advantage = normalize_advantage
+    self.batch_size = batch_size
+    self.num_batches = num_batches
+    self.summary_freq = summary_freq
+
+    # action dim
+    self.action_dim = self.env.action_space.n # TODO: ensure this works
+
   
     # build model
     self.build()
@@ -90,7 +95,7 @@ class PG(object):
     stored in self.sampled_action and self.logprob. Must handle both settings
     of self.discrete.
     """
-    action_logits = policy_network(pixels_placeholder, coordinate_placeholder, number_placeholder,
+    action_logits = policy_network(self.pixels_placeholder, self.coordinate_placeholder, self.number_placeholder,
                                    self.action_dim)
     self.sampled_action = tf.squeeze(tf.multinomial(action_logits, 1), name='sampled_action_discrete')
     self.logprob = -tf.nn.sparse_softmax_cross_entropy_with_logits(labels=self.taken_action_placeholder,
@@ -117,8 +122,8 @@ class PG(object):
     Build the baseline network within the scope
     """
     # policy_network returns (batch_size, 1) but targets fed as (batch_size,), so squeeze
-    self.baseline = tf.squeeze(policy_network(pixels_placeholder, coordinate_placeholder,
-                                              number_placeholder, 1), axis=1)
+    self.baseline = tf.squeeze(policy_network(self.pixels_placeholder, self.coordinate_placeholder,
+                                              self.number_placeholder, 1), axis=1)
     self.baseline_target_placeholder = tf.placeholder(tf.float32, shape=(None,), name='baseline_target')
     loss = tf.losses.mean_squared_error(self.baseline_target_placeholder, self.baseline, scope=scope)
     self.update_baseline_op = tf.train.AdamOptimizer().minimize(loss, name='calibrate_baseline')
@@ -138,12 +143,13 @@ class PG(object):
     self.build_policy_network_op()
     # add square loss
     self.add_loss_op()
-    # add optmizer for the main networks
+    # add optimizer for the main networks
     self.add_optimizer_op()
   
-    if self.config.use_baseline:
+    if self.use_baseline:
       self.add_baseline_op()
-  
+
+
   def initialize(self):
     """
     Assumes the graph has been constructed (have called self.build())
@@ -169,33 +175,37 @@ class PG(object):
     self.max_reward_placeholder = tf.placeholder(tf.float32, shape=(), name="max_reward")
     self.std_reward_placeholder = tf.placeholder(tf.float32, shape=(), name="std_reward")
     self.eval_reward_placeholder = tf.placeholder(tf.float32, shape=(), name="eval_reward")
+    self.dscr_real_loss_placeholder = tf.placeholder(tf.float32, shape=(), name='disc_real_data_loss')
+    self.dscr_gen_loss_placeholder = tf.placeholder(tf.float32, shape=(), name='disc_gen_data_loss')
   
     # extra summaries from python -> placeholders
     tf.summary.scalar("Avg Reward", self.avg_reward_placeholder)
     tf.summary.scalar("Max Reward", self.max_reward_placeholder)
     tf.summary.scalar("Std Reward", self.std_reward_placeholder)
     tf.summary.scalar("Eval Reward", self.eval_reward_placeholder)
+    tf.summary.scalar('Discriminator Loss on Real Data', self.dscr_real_loss_placeholder)
+    tf.summary.scalar('Discriminator Loss on Generated Data', self.dscr_gen_loss_placeholder)
             
     # logging
     self.merged = tf.summary.merge_all()
-    self.file_writer = tf.summary.FileWriter(self.config.output_path,self.sess.graph) 
+    self.file_writer = tf.summary.FileWriter(self.output_path, self.sess.graph) 
 
     
-  def init_averages(self):
+  def init_statistics(self):
     """
     Defines extra attributes for tensorboard.
-
-    You don't have to change or use anything here.
     """
     self.avg_reward = 0.
     self.max_reward = 0.
     self.std_reward = 0.
     self.eval_reward = 0.
+    self.dscr_real_loss = 0.
+    self.dscr_gen_loss = 0.
   
 
-  def update_averages(self, rewards, scores_eval):
+  def update_statistics(self, rewards, scores_eval, d_r_loss, d_g_loss):
     """
-    Update the averages.
+    Update the statistics.
   
     Args:
             rewards: deque
@@ -207,6 +217,9 @@ class PG(object):
   
     if len(scores_eval) > 0:
       self.eval_reward = scores_eval[-1]
+
+    self.dscr_real_loss = d_r_loss
+    self.dscr_gen_loss = d_g_loss
   
   
   def record_summary(self, t):
@@ -218,12 +231,15 @@ class PG(object):
       self.avg_reward_placeholder: self.avg_reward, 
       self.max_reward_placeholder: self.max_reward, 
       self.std_reward_placeholder: self.std_reward, 
-      self.eval_reward_placeholder: self.eval_reward, 
+      self.eval_reward_placeholder: self.eval_reward,
+      self.dscr_real_loss_placeholder: self.dscr_real_loss,
+      self.dscr_gen_loss_placeholder: self.dscr_gen_loss,
     }
     summary = self.sess.run(self.merged, feed_dict=fd)
     self.file_writer.add_summary(summary, t)
 
 
+  # TODO: Is the discriminator a general discriminator? How does this initialization work?
   def init_discriminator(self):
     ''' 
     Initialize the DrawEnv's discriminator with some training. 
@@ -231,7 +247,7 @@ class PG(object):
     real_prob = 0.5
     fake_prob = 0.5
     for _ in range(5000):
-      fake_prob, real_prob = env.train_disc_random_fake()
+      fake_prob, real_prob = self.env.train_disc_random_fake()
       if real_prob >= 0.75 or fake_prob <= 0.25:
         break
       
@@ -242,7 +258,7 @@ class PG(object):
   
     Args:
             num_episodes:   the number of episodes to be sampled 
-              if none, sample one batch (size indicated by config file)
+              if none, sample one batch 
     Returns:
         paths: a list of paths. Each path in paths is a dictionary with
             path["pixels"] a numpy array of ordered observations in the path
@@ -257,29 +273,40 @@ class PG(object):
     paths = []
     t = 0
   
-    while (num_episodes or t < self.config.batch_size):
-      state = env.reset()
-      states, actions, rewards = [], [], []
+    while (num_episodes or t < self.batch_size):
+      state = env.reset_to_selected_digit(self.digit)      
+      pixels, coords, numbers, actions, rewards = [], [], [], [], []
       episode_reward = 0
-  
-      for step in range(self.config.max_ep_len):
-        states.append(state)
-        # TODO: Orig code had [0] appended to end of line which causes crash with discrete actions. Removing; see if needed for cont actions
-        action = self.sess.run(self.sampled_action, feed_dict={self.observation_placeholder : states[-1][None]})
-        state, reward, done, info = env.step(action)
+
+      # fill out a full image
+      for step in range(FULL_DIMENSION*FULL_DIMENSION):
+        full_image, crd, nm = state['pixels'], state['coordinate'], state['number']
+        px = get_local_pixels(full_image, crd, window_size=LOCAL_DIMENSION)
+        pixels.append(px)
+        coords.append(crd)
+        numbers.append(nm)
+
+        # TODO: Ensure this is rank-0
+        action = self.sess.run(self.sampled_action, feed_dict={self.pixels_placeholder: px,
+                                                               self.coordinate_placeholder: crd,
+                                                               self.number_placeholder: nm})
+        state, reward, done, info = env.step(action) # TODO: try stepping with sparse rewards
         actions.append(action)
         rewards.append(reward)
         episode_reward += reward
+        
         t += 1
-        if (done or step == self.config.max_ep_len-1):
-          episode_rewards.append(episode_reward)  
+        if (done or step == FULL_DIMENSION*FULL_DIMENSION - 1):
+          episode_rewards.append(episode_reward) 
           break
-        if (not num_episodes) and t == self.config.batch_size:
+        if (not num_episodes) and t == self.batch_size:
           break
   
-      path = {"observation" : np.array(states), 
-                      "reward" : np.array(rewards), 
-                      "action" : np.array(actions)}
+      path = {'pixels': np.array(pixels),
+              'coords': np.array(coords),
+              'numbers': np.array(numbers),
+              'actions': np.array(actions),
+              'reward': np.array(rewards)}
       paths.append(path)
       episode += 1
       if num_episodes and episode >= num_episodes:
@@ -303,28 +330,22 @@ class PG(object):
        G_t = r_t + γ r_{t+1} + γ^2 r_{t+2} + ... + γ^{T-t} r_T
     
     where T is the last timestep of the episode.
-
-    TODO: compute and return G_t for each timestep. Use config.gamma.
     """
 
     all_returns = []
     for path in paths:
       rewards = path["reward"]
-      #######################################################
-      #########   YOUR CODE HERE - 5-10 lines.   ############
       returns = []
-      for r in rewards[::-1]: # G[t-1] = r + γG[t], where G[t+1] = 0
-        returns.append(r + config.gamma * (0 if not returns else returns[-1])) 
+      for r in rewards[::-1]: # G[t-1] = r + γG[t], where G[t+1] = 0. Iterate in reverse over rewards.
+        returns.append(r + self.gamma * (0 if not returns else returns[-1])) 
       returns = returns[::-1]
-      #######################################################
-      #########          END YOUR CODE.          ############
       all_returns.append(returns)
     returns = np.concatenate(all_returns)
   
     return returns
   
   
-  def calculate_advantage(self, returns, observations):
+  def calculate_advantage(self, returns, pixels, coordinates, numbers):
     """
     Calculate the advantage
     Args:
@@ -334,129 +355,93 @@ class PG(object):
               and normalizing the advantages if necessary.
               If neither of these options are True, just return returns.
 
-    TODO:
-    If config.use_baseline = False and config.normalize_advantage = False,
+    If self.use_baseline = False and self.normalize_advantage = False,
     then the "advantage" is just going to be the returns (and not actually
     an advantage). 
 
-    if config.use_baseline, then we need to evaluate the baseline and subtract
-      it from the returns to get the advantage. 
-      HINT: 1. evaluate the self.baseline with self.sess.run(...
-
-    if config.normalize_advantage:
+    if self.normalize_advantage:
       after doing the above, normalize the advantages so that they have a mean of 0
       and standard deviation of 1.
-  
     """
     adv = returns
-    #######################################################
-    #########   YOUR CODE HERE - 5-10 lines.   ############
-    if self.config.use_baseline:
-      bl = self.sess.run(self.baseline, {self.observation_placeholder: observations})
+    if self.use_baseline:
+      bl = self.sess.run(self.baseline, {self.pixels_placeholder: pixels,
+                                         self.coordinate_placeholder: coordinates,
+                                         self.number_placeholder: numbers})
       adv = returns - bl 
-    if self.config.normalize_advantage:
+    if self.normalize_advantage:
       adv = (adv - np.mean(adv))/np.std(adv)
-    #######################################################
-    #########          END YOUR CODE.          ############
+      
     return adv
   
   
-  def update_baseline(self, returns, observations):
+  def update_baseline(self, returns, pixels, coordinates, numbers):
     """
     Update the baseline
-
-    TODO:
-      apply the baseline update op with the observations and the returns.
     """
-    #######################################################
-    #########   YOUR CODE HERE - 1-5 lines.   #############
     self.sess.run(self.update_baseline_op, {self.observation_placeholder: observations,
+                                            self.coordinate_placeholder: coordinates,
+                                            self.number_placeholder: numbers,
                                             self.baseline_target_placeholder: returns})
-    #######################################################
-    #########          END YOUR CODE.          ############
   
   
   def train(self):
     """
     Performs training
-
-    You do not have to change or use anything here, but take a look
-    to see how all the code you've written fits together!
     """
     last_eval = 0 
     last_record = 0
     scores_eval = []
     
-    self.init_averages()
+    self.init_statistics()
     scores_eval = [] # list of scores computed at iteration time
   
-    for t in range(self.config.num_batches):
+    for t in range(self.num_batches):
       # collect a minibatch of samples
       paths, total_rewards = self.sample_path(self.env) 
       scores_eval = scores_eval + total_rewards
-      observations = np.concatenate([path["observation"] for path in paths])
+      pixels = np.concatenate([path['pixels'] for path in paths])
+      coords = np.concatenate([path['coords'] for path in paths])
+      numbers = np.concatenate([path['numbers'] for path in paths])
       actions = np.concatenate([path["action"] for path in paths])
-      # InvertedPendulum and HalfCheetah have spurious second dimension, so remove
-      if not self.discrete:
-        actions = actions[:,0,:]
       rewards = np.concatenate([path["reward"] for path in paths])
       # compute Q-val estimates (discounted future returns) for each time step
       returns = self.get_returns(paths)      
       advantages = self.calculate_advantage(returns, observations)
 
-      # run training operations
-      if self.config.use_baseline:
+      # run training operation for generator
+      if self.use_baseline:
         self.update_baseline(returns, observations)
       self.sess.run(self.train_op, feed_dict={
-                    self.observation_placeholder : observations, 
-                    self.action_placeholder : actions, 
-                    self.advantage_placeholder : advantages})
+                    self.pixels_placeholder: pixels,
+                    self.coordinate_placeholder: coords,
+                    self.number_placeholder: numbers,
+                    self.action_placeholder: actions, 
+                    self.advantage_placeholder: advantages})
+
+      # run training operation for discriminator
+      dscr_placeholders = env.get_discrim_placeholders
+      dscr_values = env.get_discrim_placeholder_values()
+      dscr_real_loss_output, dscr_generated_loss_output = env.discrim_loss_tensors()
+      dscr_real_loss, dscr_gen
+      
   
       # tf stuff: record summary and update saved model weights
-      if (t % self.config.summary_freq == 0):
-        self.update_averages(total_rewards, scores_eval)
+      if (t % self.summary_freq == 0):
+       self.update_statistics(total_rewards, scores_eval)
         self.record_summary(t)
         # save model params
         self.saver = tf.train.Saver()
-        self.saver.save(self.sess, config.model_path)
+        self.saver.save(self.sess, self.model_path)
 
       # compute reward statistics for this batch and log
       avg_reward = np.mean(total_rewards)
       sigma_reward = np.sqrt(np.var(total_rewards) / len(total_rewards))
-      msg = "Average reward: {:04.2f} +/- {:04.2f}".format(avg_reward, sigma_reward)
+      msg = "Average episode reward for generator: {:04.2f} +/- {:04.2f}".format(avg_reward, sigma_reward)
       self.logger.info(msg)
-  
-      if  self.config.record and (last_record > self.config.record_freq):
-        self.logger.info("Recording...")
-        last_record =0
-        self.record()
-  
+    
     self.logger.info("- Training done.")
-    export_plot(scores_eval, "Score", config.env_name, self.config.plot_output)
 
-
-  def evaluate(self, env=None, num_episodes=1):
-    """
-    Evaluates the return for num_episodes episodes.
-    Not used right now, all evaluation statistics are computed during training 
-    episodes.
-    """
-    if env==None: env = self.env
-    paths, rewards = self.sample_path(env, num_episodes)
-    avg_reward = np.mean(rewards)
-    sigma_reward = np.sqrt(np.var(rewards) / len(rewards))
-    msg = "Average reward: {:04.2f} +/- {:04.2f}".format(avg_reward, sigma_reward)
-    self.logger.info(msg)
-    return avg_reward
-     
-  
-  def record(self):
-     """
-     Re create an env and record a video for one episode
-     """
-     env = gym.make(self.config.env_name)
-     env = gym.wrappers.Monitor(env, self.config.record_path, video_callable=lambda x: True, resume=True)
-     self.evaluate(env, 1)
   
 
   def run(self):
@@ -470,113 +455,15 @@ class PG(object):
     self.train()
 
 
-        
-
-        
-# TODO: Setup one for each agent?
-with tf.variable_scope('pg_agent'):
-        # Set up placeholders.
-        pixels_placeholder = tf.placeholder(tf.float32, shape=[None, LOCAL_DIMENSION*LOCAL_DIMENSION],
-                                            name='state')
-        coordinate_placeholder = tf.placeholder(tf.float32, shape=[None, 1])
-        number_placeholder = tf.placeholder(tf.float32, shape=[None, 1])
-
-        taken_action_placeholder = tf.placeholder(tf.int32, shape=(None,), name='taken_action')
-        advantage_placeholder = tf.placeholder(tf.float32, shape=(None,), name='advantage')
-
-        # Get probabilities of actions from a given state using NN for action logits.
-        action_logits = policy_network(pixels_placeholder, coordinate_placeholder, number_placeholder,
-                                       NUM_POSSIBLE_PIXEL_COLORS)
-        sampled_action = tf.squeeze(tf.multinomial(action_logits, 1), name='sampled_action_discrete')
-
-        # Get log probability of action for policy gradient loss, then set loss and optiizer
-        logprob = -tf.nn.sparse_softmax_cross_entropy_with_logits(labels=taken_action_placeholder,
-                   logits=action_logits, name='taken_action_logprob_discrete')
-        pg_loss = -tf.reduce_mean(tf.multiply(logprob, advantage_placeholder), name='loss')
-        train_op = tf.train.AdamOptimizer(learning_rate=LEARNING_RATE).minimize(pg_loss)
-
-        # Setup baseline computations.
-        # Use same architecture as action logits to build baseline for state baseline
-        # Returned tensor has shape (batch_size, 1), so squeeze last dim
-        # TODO: Try a different architecture?
-        baseline = tf.squeeze(policy_network(pixels_placeholder, coordinate_placeholder,
-                                             number_placeholder, 1), axis=1)
-        baseline_target_placeholder = tf.placeholder(tf.float32, shape=(None,), name='baseline_target')
-        loss = tf.losses.mean_squared_error(baseline_target_placeholder, baseline)
-        update_baseline_op = tf.train.AdamOptimizer().minimize(loss, name='calibrate_baseline')
-
-
-########### TENSORFLOW SETUP ##########
+########### SETUP ##########
+# TODO: setup one agent per digit?
+env = gym.make('DrawEnv-v0')
 tb_output = 'tensorboard/pg/'
 model_path = tb_output + 'weights/'
 
-# Initialize session and assign to environment.
-sess = tf.Session()
-env.set_session(sess)
-
-# Add summary scalars. TODO: Setup one for each agent?
-avg_reward_placeholder = tf.placeholder(tf.float32, shape=(), name="pg_avg_reward")
-max_reward_placeholder = tf.placeholder(tf.float32, shape=(), name="pg_max_reward")
-std_reward_placeholder = tf.placeholder(tf.float32, shape=(), name="pg_std_reward")
-eval_reward_placeholder = tf.placeholder(tf.float32, shape=(), name="pg_eval_reward")
-
-# extra summaries from python -> placeholders
-tf.summary.scalar("PG Avg Reward", avg_reward_placeholder)
-tf.summary.scalar("PG Max Reward", max_reward_placeholder)
-tf.summary.scalar("PG Std Reward", std_reward_placeholder)
-tf.summary.scalar("PG Eval Reward", eval_reward_placeholder)
-
-# Logging
-merged = tf.summary.merge_all()
-train_writer = tf.summary.FileWriter(tb_output, sess.graph)
-
-# Initialize TF graph.
-sess.run(tf.global_variables_initializer())
-
-self.avg_reward = 0.
-self.max_reward = 0.
-self.std_reward = 0.
-self.eval_reward = 0.
-  
-
-def update_averages(self, rewards, scores_eval):
-    """
-    Update the averages.
-
-    You don't have to change or use anything here.
-  
-    Args:
-            rewards: deque
-            scores_eval: list
-    """
-    self.avg_reward = np.mean(rewards)
-    self.max_reward = np.max(rewards)
-    self.std_reward = np.sqrt(np.var(rewards) / len(rewards))
-  
-    if len(scores_eval) > 0:
-      self.eval_reward = scores_eval[-1]
-  
-  
-  def record_summary(self, t):
-    """
-    Add summary to tfboard
-
-    You don't have to change or use anything here.
-    """
-  
-    fd = {
-      self.avg_reward_placeholder: self.avg_reward, 
-      self.max_reward_placeholder: self.max_reward, 
-      self.std_reward_placeholder: self.std_reward, 
-      self.eval_reward_placeholder: self.eval_reward, 
-    }
-    summary = self.sess.run(self.merged, feed_dict=fd)
-    # tensorboard stuff
-    self.file_writer.add_summary(summary, t)
 
 
-
-
+################################# MARCEL'S CODE #########################################################
 
 
 # First train discriminator 100 iterations.
