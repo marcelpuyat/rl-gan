@@ -97,7 +97,7 @@ for i in xrange(NUM_EPISODES):
 		numbers_batch[itr+1][0] = number
 
 		state_bytes = local_pixels.tobytes()
-
+                
 		# First do a forward prop to select the best action given the current state.
 		q_value_estimates = sess.run([estimated_q_value],
                                              {number_placeholder: np.array([[number]]),
@@ -116,8 +116,8 @@ for i in xrange(NUM_EPISODES):
 			action_count[state_bytes][0] = 0
 			action_count[state_bytes][1] = 0
 		elif action_count[state_bytes][selected_action] != 0:
-			print("Num times we've taken preferred in this state: " + str(action_count[state_bytes][selected_action]))
-			print("Num times we've taken other in this state: " + str(action_count[state_bytes][other_action]))
+#			print("Num times we've taken preferred in this state: " + str(action_count[state_bytes][selected_action]))
+#			print("Num times we've taken other in this state: " + str(action_count[state_bytes][other_action]))
 			rand_prob = (0.30 - (float(action_count[state_bytes][other_action]) / \
 				(action_count[state_bytes][other_action] + action_count[state_bytes][selected_action])))
 
@@ -135,11 +135,11 @@ for i in xrange(NUM_EPISODES):
 
 			rand_prob /= state_annealing / episode_annealing
 
-			print("Probability of switching: " + str(rand_prob))
+#			print("Probability of switching: " + str(rand_prob))
 			rand_prob = max(rand_prob, 0)
 
 		if np.random.rand() < rand_prob:
-			print("Selecting random action, rand prob: " + str(rand_prob))
+#			print("Selecting random action, rand prob: " + str(rand_prob))
 			tmp = selected_action
 			selected_action = other_action
 			other_action = tmp
@@ -179,9 +179,9 @@ for i in xrange(NUM_EPISODES):
                                                          coordinate_placeholder: coordinates_batch,
                                                          discrim_real_placeholder: real_values,
                                                          discrim_fake_placeholder: fake_values})
-	print("Real loss: " + str(d_r_loss))
-	print("Fake loss: " + str(d_f_loss))
-	print("DQN Loss: " + str(loss))
+#	print("Real loss: " + str(d_r_loss))
+#	print("Fake loss: " + str(d_f_loss))
+#	print("DQN Loss: " + str(loss))
 	if i % 10 == 0:
 		train_writer.add_summary(summary, i)
 	print("Episode finished. Rendering:")
