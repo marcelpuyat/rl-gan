@@ -1,5 +1,6 @@
 from config import *
-from utils import * 
+from utils import *
+import os
 import gym
 import drawing_env
 from drawing_env.envs.ops import *
@@ -15,15 +16,16 @@ def policy_network(pixels, coordinate, number, num_actions_per_pixel):
   h0 = lrelu(conv2d(reshaped_input, 4, 2, 2, 1, 1, name="conv1"))
   h1 = lrelu(conv2d(h0, 8, 2, 2, 1, 1, name="conv2"))
   h2 = lrelu(conv2d(h1, 16, 2, 2, 1, 1, name="conv3"))
-  h2_flatted = tf.flatten(h2)
+  h2_flatted = tf.layers.flatten(h2)
     
   # Append coordinate and number label to last layer because we don't want it to be convolved with
   # the pixel values.
-  h3 = tf.contrib.layers.fully_connected(tf.concat([h2_flatted, coordinate, number], axis=1),
-                                         FULL_DIMENSION*FULL_DIMENSION, name='dense1')
-  h4 = tf.contrib.layers.fully_connected(h3, FULL_DIMENSION, name='dense2')
-  output = tf.contrib.layers.fully_connected(layer, num_actions_per_pixel,
-                                               activation_fn=None, name='dense3') 
+  coord_as_rank2 = tf.expand_dims(coordinate, 1)
+  number_as_rank2 = tf.expand_dims(number, 1)
+  h3 = tf.contrib.layers.fully_connected(tf.concat([h2_flatted, coord_as_rank2, number_as_rank2], axis=1),
+                                         FULL_DIMENSION*FULL_DIMENSION)
+  h4 = tf.contrib.layers.fully_connected(h3, FULL_DIMENSION)
+  output = tf.contrib.layers.fully_connected(h4, num_actions_per_pixel, activation_fn=None)
   return output
 
 
@@ -38,11 +40,6 @@ class DrawPG(object):
                num_batches=PG_NUM_BATCHES, summary_freq=PG_SUMMARY_FREQ):
     """
     Initialize Policy Gradient Class
-  
-    Args:
-            env: the open-ai environment
-            config: class with hyperparameters
-            logger: logger instance from logging module
     """
     # directory for training outputs
     if not os.path.exists(output_path):
@@ -66,8 +63,7 @@ class DrawPG(object):
     self.summary_freq = summary_freq
 
     # action dim
-    self.action_dim = self.env.action_space.n # TODO: ensure this works
-
+    self.action_dim = self.env.action_space.n
   
     # build model
     self.build()
@@ -80,11 +76,11 @@ class DrawPG(object):
     """
     self.pixels_placeholder = tf.placeholder(tf.float32, shape=(None, LOCAL_DIMENSION*LOCAL_DIMENSION),
                                              name='pixel_window')
-    self.coordinate_placeholder = tf.placeholder(tf.float32, shape=(None, 1), name='current_coordinate')
-    self.number_placeholder = tf.placeholder(tf.float32, shape=(None, 1), name='digit')
+    self.coordinate_placeholder = tf.placeholder(tf.float32, shape=(None,), name='current_coordinate')
+    self.number_placeholder = tf.placeholder(tf.float32, shape=(None,), name='digit')
     
     self.taken_action_placeholder = tf.placeholder(tf.int32, shape=(None,), name='taken_action')
-    self.advantage_palceolder = tf.placeholder(tf.float32, shape=(None,), name='advantage')
+    self.advantage_placeholder = tf.placeholder(tf.float32, shape=(None,), name='advantage')
   
   
   def build_policy_network_op(self, scope="policy_network"):
@@ -95,18 +91,19 @@ class DrawPG(object):
     stored in self.sampled_action and self.logprob. Must handle both settings
     of self.discrete.
     """
-    action_logits = policy_network(self.pixels_placeholder, self.coordinate_placeholder, self.number_placeholder,
-                                   self.action_dim)
-    self.sampled_action = tf.squeeze(tf.multinomial(action_logits, 1), name='sampled_action_discrete')
-    self.logprob = -tf.nn.sparse_softmax_cross_entropy_with_logits(labels=self.taken_action_placeholder,
-                    logits=action_logits, name='taken_action_logprob_discrete')            
+    with tf.variable_scope(scope):
+      action_logits = policy_network(self.pixels_placeholder, self.coordinate_placeholder, self.number_placeholder,
+                                     self.action_dim)
+      self.sampled_action = tf.squeeze(tf.multinomial(action_logits, 1), name='sampled_action_discrete')
+      self.logprob = -tf.nn.sparse_softmax_cross_entropy_with_logits(labels=self.taken_action_placeholder,
+                      logits=action_logits, name='taken_action_logprob_discrete')            
   
   
   def add_loss_op(self):
     """
     Sets the loss of a batch, the loss is a scalar 
     """
-    # REINFORCE update uses mean over all trajectories of sum over each trajectory of log π * A_t
+    # REINFORCE update uses mean over all trajectories of sum over each trajectory of log pi * A_t
     self.pg_loss = -tf.reduce_mean(tf.multiply(self.logprob, self.advantage_placeholder), name='loss')
   
   
@@ -122,21 +119,18 @@ class DrawPG(object):
     Build the baseline network within the scope
     """
     # policy_network returns (batch_size, 1) but targets fed as (batch_size,), so squeeze
-    self.baseline = tf.squeeze(policy_network(self.pixels_placeholder, self.coordinate_placeholder,
-                                              self.number_placeholder, 1), axis=1)
-    self.baseline_target_placeholder = tf.placeholder(tf.float32, shape=(None,), name='baseline_target')
-    loss = tf.losses.mean_squared_error(self.baseline_target_placeholder, self.baseline, scope=scope)
-    self.update_baseline_op = tf.train.AdamOptimizer().minimize(loss, name='calibrate_baseline')
+    with tf.variable_scope(scope):
+      self.baseline = tf.squeeze(policy_network(self.pixels_placeholder, self.coordinate_placeholder,
+                                                self.number_placeholder, 1), axis=1)
+      self.baseline_target_placeholder = tf.placeholder(tf.float32, shape=(None,), name='baseline_target')
+      loss = tf.losses.mean_squared_error(self.baseline_target_placeholder, self.baseline)
+      self.update_baseline_op = tf.train.AdamOptimizer().minimize(loss, name='calibrate_baseline')
 
   
   def build(self):
     """
-    Build model by adding all necessary variables
-
-    You don't have to change anything here - we are just calling
-    all the operations you already defined to build the tensorflow graph.
+    Build model by adding all necessary variables to tensorflow graph
     """
-  
     # add placeholders
     self.add_placeholders_op()
     # create policy net
@@ -157,8 +151,9 @@ class DrawPG(object):
 
     You don't have to change or use anything here.
     """
-    # create tf session
+    # create tf session, send info to env
     self.sess = tf.Session()
+    self.env.set_session(self.sess)
     # tensorboard stuff
     self.add_summary()
     # initiliaze all variables
@@ -179,15 +174,17 @@ class DrawPG(object):
     self.dscr_gen_loss_placeholder = tf.placeholder(tf.float32, shape=(), name='disc_gen_data_loss')
   
     # extra summaries from python -> placeholders
-    tf.summary.scalar("Avg Reward", self.avg_reward_placeholder)
-    tf.summary.scalar("Max Reward", self.max_reward_placeholder)
-    tf.summary.scalar("Std Reward", self.std_reward_placeholder)
-    tf.summary.scalar("Eval Reward", self.eval_reward_placeholder)
-    tf.summary.scalar('Discriminator Loss on Real Data', self.dscr_real_loss_placeholder)
-    tf.summary.scalar('Discriminator Loss on Generated Data', self.dscr_gen_loss_placeholder)
+    summaries = [
+      tf.summary.scalar("Avg_Reward", self.avg_reward_placeholder),
+      tf.summary.scalar("Max_Reward", self.max_reward_placeholder),
+      tf.summary.scalar("Std_Reward", self.std_reward_placeholder),
+      tf.summary.scalar("Eval_Reward", self.eval_reward_placeholder),
+      tf.summary.scalar('Discriminator_Loss_on_Real_Data', self.dscr_real_loss_placeholder),
+      tf.summary.scalar('Discriminator_Loss_on_Generated_Data', self.dscr_gen_loss_placeholder),
+    ]
             
     # logging
-    self.merged = tf.summary.merge_all()
+    self.merged = tf.summary.merge(summaries)
     self.file_writer = tf.summary.FileWriter(self.output_path, self.sess.graph) 
 
     
@@ -237,7 +234,7 @@ class DrawPG(object):
     }
     summary = self.sess.run(self.merged, feed_dict=fd)
     self.file_writer.add_summary(summary, t)
-
+    self.file_writer.flush()
 
   # TODO: Is the discriminator a general discriminator? How does this initialization work?
   def init_discriminator(self):
@@ -250,8 +247,8 @@ class DrawPG(object):
       fake_prob, real_prob = self.env.train_disc_random_fake()
       if real_prob >= 0.75 or fake_prob <= 0.25:
         break
+
       
-  
   def sample_path(self, env, num_episodes = None):
     """
     Sample path for the environment.
@@ -287,9 +284,10 @@ class DrawPG(object):
         numbers.append(nm)
 
         # TODO: Ensure this is rank-0
-        action = self.sess.run(self.sampled_action, feed_dict={self.pixels_placeholder: px,
-                                                               self.coordinate_placeholder: crd,
-                                                               self.number_placeholder: nm})
+        action = self.sess.run(self.sampled_action, feed_dict={self.pixels_placeholder: px[None,:],
+                                                               self.coordinate_placeholder: [crd],
+                                                               self.number_placeholder: [nm]})
+
         state, reward, done, info = env.step(action) # TODO: try stepping with sparse rewards
         actions.append(action)
         rewards.append(reward)
@@ -325,9 +323,9 @@ class DrawPG(object):
     After acting in the environment, we record the observations, actions, and
     rewards. To get the advantages that we need for the policy update, we have
     to convert the rewards into returns, G_t, which are themselves an estimate
-    of Q^π (s_t, a_t):
+    of Q^pi (s_t, a_t):
     
-       G_t = r_t + γ r_{t+1} + γ^2 r_{t+2} + ... + γ^{T-t} r_T
+       G_t = r_t + gamma r_{t+1} + gamma^2 r_{t+2} + ... + gamma^{T-t} r_T
     
     where T is the last timestep of the episode.
     """
@@ -336,7 +334,7 @@ class DrawPG(object):
     for path in paths:
       rewards = path["reward"]
       returns = []
-      for r in rewards[::-1]: # G[t-1] = r + γG[t], where G[t+1] = 0. Iterate in reverse over rewards.
+      for r in rewards[::-1]: # G[t-1] = r + gamma G[t], where G[t+1] = 0. Iterate in reverse over rewards.
         returns.append(r + self.gamma * (0 if not returns else returns[-1])) 
       returns = returns[::-1]
       all_returns.append(returns)
@@ -379,7 +377,7 @@ class DrawPG(object):
     """
     Update the baseline
     """
-    self.sess.run(self.update_baseline_op, {self.observation_placeholder: observations,
+    self.sess.run(self.update_baseline_op, {self.pixels_placeholder: pixels,
                                             self.coordinate_placeholder: coordinates,
                                             self.number_placeholder: numbers,
                                             self.baseline_target_placeholder: returns})
@@ -392,7 +390,8 @@ class DrawPG(object):
     last_eval = 0 
     last_record = 0
     scores_eval = []
-    
+
+    self.init_discriminator()
     self.init_statistics()
     scores_eval = [] # list of scores computed at iteration time
   
@@ -403,216 +402,71 @@ class DrawPG(object):
       pixels = np.concatenate([path['pixels'] for path in paths])
       coords = np.concatenate([path['coords'] for path in paths])
       numbers = np.concatenate([path['numbers'] for path in paths])
-      actions = np.concatenate([path["action"] for path in paths])
+      actions = np.concatenate([path["actions"] for path in paths])
       rewards = np.concatenate([path["reward"] for path in paths])
       # compute Q-val estimates (discounted future returns) for each time step
       returns = self.get_returns(paths)      
-      advantages = self.calculate_advantage(returns, observations)
+      advantages = self.calculate_advantage(returns, pixels, coords, numbers)
 
       # run training operation for generator
       if self.use_baseline:
-        self.update_baseline(returns, observations)
+        self.update_baseline(returns, pixels, coords, numbers)
       self.sess.run(self.train_op, feed_dict={
                     self.pixels_placeholder: pixels,
                     self.coordinate_placeholder: coords,
                     self.number_placeholder: numbers,
-                    self.action_placeholder: actions, 
+                    self.taken_action_placeholder: actions, 
                     self.advantage_placeholder: advantages})
 
-      # run training operation for discriminator
-      dscr_placeholders = env.get_discrim_placeholders
-      dscr_values = env.get_discrim_placeholder_values()
-      dscr_real_loss_output, dscr_generated_loss_output = env.discrim_loss_tensors()
-      dscr_real_loss, dscr_gen
-      
-  
+      # get losses for discriminator
+      dscr_placeholders = env.get_discrim_placeholders()
+      dscr_values = env.get_discrim_placeholder_values() 
+      dscr_real_loss_tensor, dscr_gen_loss_tensor = env.discrim_loss_tensors()
+      dscr_fd = dict(zip(dscr_placeholders, dscr_values))
+      d_r_loss, d_g_loss = self.sess.run([dscr_real_loss_tensor, dscr_gen_loss_tensor],
+                                         feed_dict=dscr_fd)
+              
       # tf stuff: record summary and update saved model weights
       if (t % self.summary_freq == 0):
-       self.update_statistics(total_rewards, scores_eval)
-        self.record_summary(t)
-        # save model params
-        self.saver = tf.train.Saver()
-        self.saver.save(self.sess, self.model_path)
+       self.update_statistics(total_rewards, scores_eval, d_r_loss, d_g_loss)
+       self.record_summary(t)
+       # save model params
+       self.saver = tf.train.Saver()
+       self.saver.save(self.sess, self.model_path)
+
+       # Also render
+       print('Rendering last generated digit...')
+       self.env.render()
 
       # compute reward statistics for this batch and log
       avg_reward = np.mean(total_rewards)
       sigma_reward = np.sqrt(np.var(total_rewards) / len(total_rewards))
-      msg = "Average episode reward for generator: {:04.2f} +/- {:04.2f}".format(avg_reward, sigma_reward)
+      msg = 'Average episode reward for generator | Discriminator loss on real | Discriminator loss on generated: '\
+            + '{:04.2f} +/- {:04.2f} | {:04.2f} | {:04.2f}'.format(avg_reward, sigma_reward, d_r_loss, d_g_loss)
       self.logger.info(msg)
     
     self.logger.info("- Training done.")
 
   
-
   def run(self):
     """
     Apply procedures of training for a PG.
     """
     # initialize
     self.initialize()
-
-    # model
+    # train model
     self.train()
 
 
 ########### SETUP ##########
 # TODO: setup one agent per digit?
+digit = 5
 env = gym.make('DrawEnv-v0')
-tb_output = 'tensorboard/pg/'
-model_path = tb_output + 'weights/'
+output_path = 'tensorboard/pg/'
+model_path = output_path + 'weights/'
+log_path = output_path + 'logs.txt'
 
+model = DrawPG(digit, env, output_path, model_path, log_path)
+model.run()
 
-
-################################# MARCEL'S CODE #########################################################
-
-
-# First train discriminator 100 iterations.
-real_prob = 0.5
-fake_prob = 0.5
-num_iters = 0
-while (real_prob < 0.75 and fake_prob > 0.25) or num_iters < 5000:
-	fake_prob, real_prob = env.train_disc_random_fake()
-	num_iters += 1
-
-action_count = {}
-
-# Training.
-for i in xrange(NUM_EPISODES):
-	print("Episode num: " + str(i))
-	curr_state = env.reset()
-	episode_done = False
-
-	pixels_batch = np.zeros((EPISODE_LENGTH,LOCAL_DIMENSION*LOCAL_DIMENSION))
-	coordinates_batch = np.zeros((EPISODE_LENGTH, 1))
-	numbers_batch = np.zeros((EPISODE_LENGTH, 1))
-	actions_selected_batch = np.zeros(EPISODE_LENGTH)
-	rewards = np.zeros(EPISODE_LENGTH)
-
-	itr = 0
-	# Perform one episode to finish.
-	while not episode_done:
-		all_pixels = curr_state['pixels']
-		number = curr_state['number']
-
-		local_pixels = get_local_pixels(all_pixels, curr_state['coordinate'])
-
-		pixels_batch[itr] = local_pixels
-		pixels_batch[itr+1] = local_pixels
-		coordinates_batch[itr][0] = curr_state['coordinate']
-		coordinates_batch[itr+1][0] = curr_state['coordinate']
-		numbers_batch[itr][0] = number
-		numbers_batch[itr+1][0] = number
-
-		state_bytes = local_pixels.tobytes()
-
-		# First do a forward prop to select the best action given the current state.
-		q_value_estimates = sess.run([estimated_q_value],
-                                             {number_placeholder: np.array([[number]]),
-                                              pixels_placeholder: np.array([local_pixels]),
-                                              coordinate_placeholder: np.array([[curr_state['coordinate']]])
-                                              })
-		selected_action = np.argmax(q_value_estimates[0])
-		other_action = 1 if selected_action == 0 else 0
-
-		rand_prob = 0.0
-
-		# Compute certainty of our action choice by seeing how many times we've taken it compared to the other action in this
-		# particular state.
-		if state_bytes not in action_count:
-			action_count[state_bytes] = {}
-			action_count[state_bytes][0] = 0
-			action_count[state_bytes][1] = 0
-		elif action_count[state_bytes][selected_action] != 0:
-			print("Num times we've taken preferred in this state: " + str(action_count[state_bytes][selected_action]))
-			print("Num times we've taken other in this state: " + str(action_count[state_bytes][other_action]))
-			rand_prob = (0.30 - (float(action_count[state_bytes][other_action]) / \
-				(action_count[state_bytes][other_action] + action_count[state_bytes][selected_action])))
-
-			# Annealing based on episode. The layer the episode, the lower our random prob chance. Mostly just fiddled with these numbers.
-			episode_annealing = (4 * (1 - (float(i) / NUM_EPISODES)))
-			if episode_annealing == 0:
-				episode_annealing = 1
-
-			# Annealing based on state. We want some sort of log/sqrt type function that increases random prob chance
-                        # as we move on to later coordinates (since we usually are easily able to learn to do well for the earlier ones).
-			# Mostly just fiddled with these constants.
-			state_annealing = np.sqrt((FULL_DIMENSION*FULL_DIMENSION - curr_state['coordinate'])*5)
-			if state_annealing == 0:
-				state_annealing = 1
-
-			rand_prob /= state_annealing / episode_annealing
-
-			print("Probability of switching: " + str(rand_prob))
-			rand_prob = max(rand_prob, 0)
-
-		if np.random.rand() < rand_prob:
-			print("Selecting random action, rand prob: " + str(rand_prob))
-			tmp = selected_action
-			selected_action = other_action
-			other_action = tmp
-
-		actions_selected_batch[itr] = selected_action
-		actions_selected_batch[itr+1] = other_action
-		_, other_reward, _, _ = env.try_step(other_action)
-		next_state, reward, episode_done, _ = env.step(selected_action)
-		rewards[itr] = reward
-		rewards[itr+1] = other_reward
-
-		# Update action certainty
-		action_count[state_bytes][selected_action] += 1
-
-		curr_state = next_state
-		itr += 2
-
-	# shuffle all lists in batch
-	random_order = np.random.choice(rewards.size, size=rewards.size)
-	rewards = rewards[random_order]
-	pixels_batch = pixels_batch[random_order]
-	coordinates_batch = coordinates_batch[random_order]
-	actions_selected_batch = actions_selected_batch[random_order]
-	numbers_batch = numbers_batch[random_order]
-        
-	# Given the reward, train our DQN.
-	discrim_real_placeholder, discrim_real_label_placeholder, discrim_fake_placeholder, discrim_fake_label_placeholder = env.get_discrim_placeholders()
-	real_values, real_labels, fake_values, fake_labels = env.get_discrim_placeholder_values()
-	real_loss, fake_loss = env.discrim_loss_tensors()
-	d_r_loss, d_f_loss, summary, _, loss = sess.run([real_loss, fake_loss, merged, train_q_network, objective_fn],
-                                                        {discrim_real_label_placeholder: real_labels,
-                                                         discrim_fake_label_placeholder: fake_labels,
-                                                         number_placeholder: numbers_batch,
-                                                         pixels_placeholder: pixels_batch,
-                                                         action_rewards_placeholder: rewards,
-                                                         action_selected_placeholder: actions_selected_batch,
-                                                         coordinate_placeholder: coordinates_batch,
-                                                         discrim_real_placeholder: real_values,
-                                                         discrim_fake_placeholder: fake_values})
-	print("Real loss: " + str(d_r_loss))
-	print("Fake loss: " + str(d_f_loss))
-	print("DQN Loss: " + str(loss))
-	if i % 10 == 0:
-		train_writer.add_summary(summary, i)
-	print("Episode finished. Rendering:")
-	env.render()
-
-	i += 1
-	if i % 100 == 0:
-		state = env.reset()
-		done = False
-		# Do a full episode with no randomness
-		while not done:
-			local_pix = get_local_pixels(state['pixels'], state['coordinate'])
-			q_value_estimates = sess.run([estimated_q_value],
-                                                     {number_placeholder: np.array([[state['number']]]),
-                                                      pixels_placeholder: np.array([local_pix]),
-                                                      coordinate_placeholder: np.array([[state['coordinate']]])
-                                                     })
-			selected_action = np.argmax(q_value_estimates[0])
-			next_state, _, done, _ = env.step(selected_action)
-			state = next_state
-		print("--------------------")
-		print("--------------------")
-		print("Test with no randomness")
-		env.render()
-		print("--------------------")
-		print("--------------------")
 

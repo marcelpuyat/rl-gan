@@ -25,7 +25,7 @@ class DrawEnv(Env):
 		#
 		# Note that the actions are to select 0 (meaning color white) or 1
 		# (meaning color black) for a given pixel.
-		self.action_space = spaces.MultiBinary(dimension*dimension*2)
+		self.action_space = spaces.Discrete(NUM_POSSIBLE_PIXEL_VALUES-1)
 
 		# The first value in the action tuple is the pixel.
 		#
