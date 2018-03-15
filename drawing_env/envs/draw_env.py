@@ -1,4 +1,5 @@
-import numpy as np
+
+1;95;0cimport numpy as np
 import tensorflow as tf
 
 from gym import Env, spaces
@@ -154,15 +155,7 @@ class DrawEnv(Env):
 	# The reward is a function of how much we were able to trick the discriminator (i.e. how
 	# high the fake_prob is) and how many pixels had to be filled in.
 	def _compute_reward(self, fake_prob, num_unfilled_pixels):
-		# For now, we try the following reward:
 		# - We want the fake_prob to be correlated with the reward
 		# - We want the num_unfilled_pixels to be inversely weighted with the reward
 		# So we just try fake_prob / (num_unfilled_pixels + 1).
-		# Note the +1 is needed so we don't divide by zero.
-		# TODO: Experiment with this.
-		# Selecting this 0.48 value seemed to make learning a lot faster. Also setting the reward factor to be a lot bigger.
-
-		a = fake_prob - 0.48
-		if a > 0:
-			a *= 10 # Strengthen correct signal reward.
-		return a * REWARD_FACTOR / (num_unfilled_pixels + 1)
+                return -np.log(1 - fake_prob)/(1 + num_unfilled_pixels)

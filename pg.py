@@ -11,7 +11,7 @@ import tensorflow as tf
 # TODO: Try different architecture?
 def policy_network(pixels, coordinate, number, num_actions_per_pixel):
   batch_size = tf.shape(pixels)[0]
-  reshaped_input = tf.reshape(pixels, tf.stack([batch_size, FULL_DIMENSION, FULL_DIMENSION, 1]))
+  reshaped_input = tf.reshape(pixels, tf.stack([batch_size, LOCAL_DIMENSION, LOCAL_DIMENSION, 1]))
     
   h0 = lrelu(conv2d(reshaped_input, 4, 2, 2, 1, 1, name="conv1"))
   h1 = lrelu(conv2d(h0, 8, 2, 2, 1, 1, name="conv2"))
@@ -37,7 +37,7 @@ class DrawPG(object):
   # TODO: Remove coordinate placeholder?
   def __init__(self, digit, env, output_path, model_path, log_path, gamma=1, lr=PG_LR,
                use_baseline=True, normalize_advantage=True, batch_size=PG_BATCH_NSTEPS,
-               num_batches=PG_NUM_BATCHES, summary_freq=PG_SUMMARY_FREQ):
+               num_batches=PG_NUM_BATCHES, summary_freq=PG_SUMMARY_FREQ, draw_freq=PG_DRAW_FREQ):
     """
     Initialize Policy Gradient Class
     """
@@ -61,6 +61,7 @@ class DrawPG(object):
     self.batch_size = batch_size
     self.num_batches = num_batches
     self.summary_freq = summary_freq
+    self.draw_freq = draw_freq
 
     # action dim
     self.action_dim = self.env.action_space.n
@@ -74,7 +75,7 @@ class DrawPG(object):
     Adds placeholders to the graph
     Set up the observation, action, and advantage placeholder
     """
-    self.pixels_placeholder = tf.placeholder(tf.float32, shape=(None, FULL_DIMENSION*FULL_DIMENSION),
+    self.pixels_placeholder = tf.placeholder(tf.float32, shape=(None, LOCAL_DIMENSION*LOCAL_DIMENSION),
                                              name='pixel_window')
     self.coordinate_placeholder = tf.placeholder(tf.float32, shape=(None,), name='current_coordinate')
     self.number_placeholder = tf.placeholder(tf.float32, shape=(None,), name='digit')
@@ -278,8 +279,8 @@ class DrawPG(object):
       # fill out a full image
       for step in range(FULL_DIMENSION*FULL_DIMENSION):
         full_image, crd, nm = state['pixels'], state['coordinate'], state['number']
-        px = full_image
-#        px = get_local_pixels(full_image, crd, window_size=LOCAL_DIMENSION)
+#        px = full_image
+        px = get_local_pixels(full_image, crd, window_size=LOCAL_DIMENSION)
         pixels.append(px)
         coords.append(crd)
         numbers.append(nm)
@@ -428,15 +429,12 @@ class DrawPG(object):
               
       # tf stuff: record summary and update saved model weights
       if (t % self.summary_freq == 0):
-       self.update_statistics(total_rewards, scores_eval, d_r_loss, d_g_loss)
-       self.record_summary(t)
-       # save model params
-       self.saver = tf.train.Saver()
-       self.saver.save(self.sess, self.model_path)
-
-       # Also render
-       print('Rendering last generated digit...')
-       self.env.render()
+        self.update_statistics(total_rewards, scores_eval, d_r_loss, d_g_loss)
+        self.record_summary(t)
+      if (t % self.draw_freq == 0):
+        # Also render
+        print('Rendering last generated digit...')
+        self.env.render()
 
       # compute reward statistics for this batch and log
       avg_reward = np.mean(total_rewards)
@@ -446,6 +444,11 @@ class DrawPG(object):
       self.logger.info(msg)
     
     self.logger.info("- Training done.")
+    
+    # save model params
+    self.saver = tf.train.Saver()
+    self.saver.save(self.sess, self.model_path)
+
 
   
   def run(self):

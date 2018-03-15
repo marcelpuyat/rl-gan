@@ -1,4 +1,6 @@
 gym/
 tensorboard/
+tensorforce/
 .env/
 *.pyc
+.DS_STORE
