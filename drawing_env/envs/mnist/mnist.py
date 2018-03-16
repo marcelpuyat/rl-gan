@@ -2,6 +2,8 @@ import os
 import struct
 import numpy as np
 
+MAX_VAL = 255
+
 """
 Loosely inspired by http://abel.ee.ucla.edu/cvxopt/_downloads/mnist.py
 which is GPL licensed.
