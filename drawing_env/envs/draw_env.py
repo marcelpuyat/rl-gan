@@ -4,6 +4,7 @@ from config import *
 from gym import Env, spaces
 from gym.utils import seeding
 from discriminator import RLDiscriminator
+from ascii_render import im_to_ascii
 
 class DrawEnv(Env):
 	def __init__(self, dimension=MNIST_DIMENSION):
@@ -36,13 +37,14 @@ class DrawEnv(Env):
                 self.number = np.random.choice(self.digits)
 
                 # Rendering style
-                self.render_len = int(np.floor(np.log10(max(self.digits))))
+                self.render_len = int(np.ceil(np.log10(NUM_POSSIBLE_PIXEL_VALUES)))
                 self.render_fmt = '{{:0{}}}'.format(self.render_len) # Print zero-padded value
 
                 
 	def set_session(self, sess):
 		self.sess = sess
-		self.rl_discriminator = RLDiscriminator(self.sess, self.dimension, self.dimension, 1)
+		self.rl_discriminator = RLDiscriminator(self.sess, self.dimension, self.dimension,
+                                                        batch_size=1, train_class=self.number)
 
                 
 	def render(self, mode='human'):
@@ -61,15 +63,11 @@ class DrawEnv(Env):
 
                 
 	def _print_pixels(self, pixels):
-		print("--------------------------")
-		print("Number: " + str(self.number))
+		print("-------------------------------------------")
+                print(im_to_ascii(pixels.reshape((MNIST_DIMENSION,MNIST_DIMENSION))))
 		print("\n")
-		for row in xrange(self.dimension):
-			row_str = ''
-			for col in xrange(self.dimension):
-				row_str += str(self.render_val(pixels[(row * self.dimension) + col])) + " "
-			print(row_str + "\n")
-		print("--------------------------")
+                print("Number: " + str(self.number))
+		print("-------------------------------------------")
 
                 
 	def seed(self, seed=None):
@@ -117,7 +115,7 @@ class DrawEnv(Env):
 		assert a >= 0, "Pixel value for an action must fall in range: [0," + str(NUM_POSSIBLE_PIXEL_VALUES-2) + "]. Current invalid action: " + str(a)
 
 		copy = np.copy(self.pixel_values)
-		copy[self.coordinate] = a + 1
+		copy[self.coordinate] = a + MIN_PX_VALUE
 
 		num_unfilled = copy.size - self.coordinate - 1
 
@@ -127,7 +125,10 @@ class DrawEnv(Env):
 
         
 	def get_discrim_placeholders(self):
-		return self.rl_discriminator.get_real_placeholder(), self.rl_discriminator.get_real_label_placeholder(), self.rl_discriminator.get_fake_placeholder(), self.rl_discriminator.get_fake_label_placeholder()
+		return (self.rl_discriminator.get_real_placeholder(),
+                        self.rl_discriminator.get_real_label_placeholder(),
+                        self.rl_discriminator.get_fake_placeholder(),
+                        self.rl_discriminator.get_fake_label_placeholder())
 
         
 	def get_discrim_placeholder_values(self):
@@ -141,7 +142,7 @@ class DrawEnv(Env):
 		assert a >= 0, "Pixel value for an action must fall in range: [0," + str(NUM_POSSIBLE_PIXEL_VALUES-2) + "]. Current invalid action: " + str(a)
 
 		# Set the pixel value in our state based on the action.
-		self.pixel_values[self.coordinate] = a + 1
+		self.pixel_values[self.coordinate] = a + MIN_PX_VALUE
 
 #		print("Testing disc with taking real action " + str(a+2) + " at coordinate: " + str(self.coordinate))
 		self.coordinate += 1

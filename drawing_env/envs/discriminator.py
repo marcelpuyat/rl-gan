@@ -22,14 +22,11 @@ class RLDiscriminator(object):
         self.sess.run(tf.global_variables_initializer())
 
         # Store MNIST data
-        mnist_data = mnist.read('training', 'mnist')
+        mnist_data = mnist.read('training')
 
-        # Add 1 to MAX_VAL so that if MAX_VAL divisible by NUM_POSSIBLE_PIXEL_VALUES-1,
-        # we still only have NUM_POSSIBLE_PIXEL_VALUES-1 buckets for filled pixels
-        divisor = int(np.ceil((mnist.MAX_VAL+1.)/(NUM_POSSIBLE_PIXEL_VALUES-1)))
         self.real_examples = {label: [] for label in self.class_labels}
         for (digit, im) in mnist_data:
-            self.real_examples[digit].append((MIN_PX_VALUE + im/divisor).flatten())
+            self.real_examples[digit].append((MIN_PX_VALUE + im/BIN_WIDTH).flatten())
 
 
     def get_fake_placeholder(self):
@@ -77,9 +74,9 @@ class RLDiscriminator(object):
         fake_label_batch = np.zeros((self.batch_size, 1)) # TODO: Add more to support fake image batching
         fake_label_batch[0] = fake_label
         _, real_loss, real_prob, fake_loss, fake_prob = self.sess.run([self.train_disc, self.disc_real_loss,
-                                                                       self.disc_real_probability,
+                                                                       self.disc_real_prob,
                                                                        self.disc_fake_loss,
-                                                                       self.disc_fake_probability],
+                                                                       self.disc_fake_prob],
                                                                       {self.real_input_images: real_batch,
                                                                        self.real_input_labels: labels,
                                                                        self.fake_input_images: fake_batch,
@@ -111,9 +108,9 @@ class RLDiscriminator(object):
         fake_label_batch[0] = fake_label
 
         real_loss, real_prob, fake_loss, fake_prob = self.sess.run([self.disc_real_loss,
-                                                                    self.disc_real_probability,
+                                                                    self.disc_real_prob,
                                                                     self.disc_fake_loss,
-                                                                    self.disc_fake_probability],
+                                                                    self.disc_fake_prob],
                                                                    {self.real_input_images: real_batch,
                                                                     self.real_input_labels: labels,
                                                                     self.fake_input_images: fake_batch,
