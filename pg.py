@@ -272,12 +272,14 @@ class DrawPG(object):
     t = 0
   
     while (num_episodes or t < self.batch_size):
+      print('\tImage {}'.format(episode))
       state = env.reset_to_selected_digit(self.digit)      
       pixels, coords, numbers, actions, rewards = [], [], [], [], []
       episode_reward = 0
 
       # fill out a full image
-      for step in range(FULL_DIMENSION*FULL_DIMENSION):
+      for step in range(PG_EPISODE_LENGTH):
+#        print('\t\tStep {}'.format(step))
         full_image, crd, nm = state['pixels'], state['coordinate'], state['number']
 #        px = full_image
         px = get_local_pixels(full_image, crd, window_size=LOCAL_DIMENSION)
@@ -397,6 +399,7 @@ class DrawPG(object):
     scores_eval = [] # list of scores computed at iteration time
   
     for t in range(self.num_batches):
+      print('Batch {}'.format(t))
       # collect a minibatch of samples
       paths, total_rewards = self.sample_path(self.env) 
       scores_eval = scores_eval + total_rewards
@@ -449,7 +452,6 @@ class DrawPG(object):
     self.saver = tf.train.Saver()
     self.saver.save(self.sess, self.model_path)
 
-
   
   def run(self):
     """
@@ -463,7 +465,7 @@ class DrawPG(object):
 
 ########### SETUP ##########
 # TODO: setup one agent per digit?
-digit = 5
+digit = 8
 env = gym.make('DrawEnv-v0')
 output_path = 'tensorboard/pg/'
 model_path = output_path + 'weights/'

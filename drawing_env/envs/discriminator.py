@@ -11,15 +11,15 @@ from ops import *
 class RLDiscriminator(object):
 
     def __init__(self, sess, input_height=MNIST_DIMENSION, input_width=MNIST_DIMENSION,
-                 batch_size=1, class_labels=MNIST_DIGITS, train_class=None):
+                 batch_size=10, fake_replay_capacity=1000, class_labels=MNIST_DIGITS,
+                 train_class=None):
         self.sess = sess
         self.input_height = input_height
         self.input_width = input_width
         self.batch_size = batch_size
+        self.fake_replay_capacity = 1000 
         self.class_labels = class_labels
         self.train_class = train_class # if the discriminator trains on a single class. if None, train on all
-        self._build_discriminator_model()
-        self.sess.run(tf.global_variables_initializer())
 
         # Store MNIST data
         mnist_data = mnist.read('training')
@@ -27,6 +27,16 @@ class RLDiscriminator(object):
         self.real_examples = {label: [] for label in self.class_labels}
         for (digit, im) in mnist_data:
             self.real_examples[digit].append((MIN_PX_VALUE + im/BIN_WIDTH).flatten())
+
+        # Replay buffers and encounter counts for each label. If a count goes over fake_replay_capacity,
+        # start overwriting at the beginning of the replay buffer.
+        self.fake_replay_buffers = {label: [] for label in self.class_labels}
+        self.frb_counts = {label: 0 for label in self.class_labels}
+
+        # TODO incorporate experience replay
+        
+        self._build_discriminator_model()
+        self.sess.run(tf.global_variables_initializer())
 
 
     def get_fake_placeholder(self):
@@ -73,6 +83,7 @@ class RLDiscriminator(object):
         fake_batch[0] = fake_image
         fake_label_batch = np.zeros((self.batch_size, 1)) # TODO: Add more to support fake image batching
         fake_label_batch[0] = fake_label
+
         _, real_loss, real_prob, fake_loss, fake_prob = self.sess.run([self.train_disc, self.disc_real_loss,
                                                                        self.disc_real_prob,
                                                                        self.disc_fake_loss,
@@ -185,6 +196,7 @@ class RLDiscriminator(object):
             batch_size = tf.shape(image)[0]
             reshaped_input = tf.reshape(image, tf.stack([batch_size, self.input_height, self.input_width, 1]))
 
+            batch_normalized = tf.contrib.layers.batch_norm(reshaped_input) # Seen as suggestion for GAN training?
             h0 = lrelu(conv2d(reshaped_input, 4, 2, 2, 1, 1, name="conv1"))
             h1 = lrelu(conv2d(h0, 8, 2, 2, 1, 1, name="conv2"))
             h2 = lrelu(conv2d(h1, 16, 2, 2, 1, 1, name="conv3"))
