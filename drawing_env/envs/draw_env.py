@@ -36,10 +36,6 @@ class DrawEnv(Env):
                 self.digits = MNIST_DIGITS
                 self.number = np.random.choice(self.digits)
 
-                # Rendering style
-                self.render_len = int(np.ceil(np.log10(NUM_POSSIBLE_PIXEL_VALUES)))
-                self.render_fmt = '{{:0{}}}'.format(self.render_len) # Print zero-padded value
-
                 
 	def set_session(self, sess):
 		self.sess = sess
@@ -54,14 +50,7 @@ class DrawEnv(Env):
 		# Right now, we're simply printing out the pixel_values to stdout.
 		self._print_pixels(self.pixel_values)
 
-                
-	def render_val(self, val):
-                if val == UNFILLED_PX_VALUE:
-                        return '.' * self.render_len
-                else:
-                        return self.render_fmt.format(val)
-
-                
+                                
 	def _print_pixels(self, pixels):
 		print("-------------------------------------------")
                 print(im_to_ascii(pixels.reshape((MNIST_DIMENSION,MNIST_DIMENSION))))
