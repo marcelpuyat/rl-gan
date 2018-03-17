@@ -284,6 +284,7 @@ class DrawPG(object):
 				# print('\t\t\tStep {}'.format(step))
 				full_image, crd, nm = state['pixels'], state['coordinate'], state['number']
 				px = get_local_pixels(full_image, crd, window_size=LOCAL_DIMENSION)
+				#px = full_image
 				pixels.append(px)
 				coords.append(crd)
 				numbers.append(nm)

@@ -3,6 +3,7 @@ import tensorflow as tf
 import numpy as np
 import mnist.mnist as mnist
 from ops import *
+from ascii_render import im_to_ascii
 
 # The external API is to simply call train with a fake image. This will then do one forward prop,
 # return the probability assigned to this fake image, and update its parameters.
@@ -25,6 +26,10 @@ class RLDiscriminator(object):
 		self.real_examples = {label: [] for label in self.class_labels}
 		for (digit, im) in mnist_data:
 			self.real_examples[digit].append((MIN_PX_VALUE + im/BIN_WIDTH).flatten())
+
+		print('True example images:')
+		for label in self.real_examples:
+			print(im_to_ascii(self.real_examples[label][0].reshape((self.input_height, self.input_width))) + '\n')
 
 		self._build_discriminator_model()
 		self.sess.run(tf.global_variables_initializer())
