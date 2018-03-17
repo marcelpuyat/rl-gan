@@ -422,6 +422,8 @@ class DrawPG(object):
                     self.taken_action_placeholder: actions, 
                     self.advantage_placeholder: advantages})
 
+      # train discriminator # TODO: implement
+      
       # get losses for discriminator
       dscr_placeholders = env.get_discrim_placeholders()
       dscr_values = env.get_discrim_placeholder_values() 
