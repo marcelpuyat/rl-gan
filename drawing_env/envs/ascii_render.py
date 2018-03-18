@@ -24,5 +24,5 @@ def im_to_ascii(im, mn=None, mx=None):
     bin_width = int(np.ceil((mx - mn + 1.)/len(ASCII_CHARS)))
     im_binned = (im - mn)/bin_width
     
-    return '\n'.join([''.join([ASCII_CHARS[val] for val in row]) for row in im_binned])
+    return '\n'.join([' '.join([ASCII_CHARS[val] for val in row]) for row in im_binned])
 
