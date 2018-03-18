@@ -1,5 +1,6 @@
 import numpy as np
 import tensorflow as tf
+import matplotlib.pyplot as plt
 from config import *
 from gym import Env, spaces
 from gym.utils import seeding
@@ -37,17 +38,19 @@ class DrawEnv(Env):
 												batch_size=1, train_class=train_class)
 
 		
-	def render(self, mode='human'):
-		# TODO: Write this out to an actual file, and convert the pixel values to a format
-		# that will allow the file to render as an actual image.
-
-		# Right now, we're simply printing out the pixel_values to stdout.
-		self._print_pixels(self.pixel_values)
+	def render(self, filename, mode='human'):
+		im = self.pixel_values.reshape((MNIST_DIMENSION, MNIST_DIMENSION))
+		fig = plt.imshow(im, cmap='Greys')
+		fig.axes.get_xaxis().set_visible(False)
+		fig.axes.get_yaxis().set_visible(False)
+		plt.savefig(filename, bbox_inches='tight', pad_inches=0, format='eps', dpi=100)
+		
+		self._print_pixels(im)
 
 				
-	def _print_pixels(self, pixels):
+	def _print_pixels(self, im):
 		print("-------------------------------------------")
-		print(im_to_ascii(pixels.reshape((MNIST_DIMENSION,MNIST_DIMENSION))))
+		print(im_to_ascii(im))
 		print("\n")
 		print("Number: " + str(self.number))
 		print("-------------------------------------------")

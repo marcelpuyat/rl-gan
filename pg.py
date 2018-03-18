@@ -1,12 +1,14 @@
 from config import *
 from utils import *
+import numpy as np
+import tensorflow as tf
 import os
+import shutil
+from datetime import datetime
 import gym
 import drawing_env
 from drawing_env.envs.ops import *
 from drawing_env.envs.draw_env import DrawEnvTrainOnDemand
-import numpy as np
-import tensorflow as tf
 
 # Policy gradient architecture. Return logits for each action's probability
 # TODO: Try different architecture?
@@ -34,7 +36,7 @@ class DrawPG(object):
 	"""
 	Abstract Class for implementing a Policy Gradient Based Algorithm
 	"""
-	def __init__(self, env, output_path, model_path, log_path, gamma=1, lr=PG_LR,
+	def __init__(self, env, output_path, model_path, log_path, im_path, gamma=1, lr=PG_LR,
 				 use_baseline=True, normalize_advantage=True, batch_size=PG_BATCH_NSTEPS,
 				 num_batches=PG_NUM_BATCHES, gsteps_per_dstep=5,
 				 summary_freq=PG_SUMMARY_FREQ, draw_freq=PG_DRAW_FREQ):
@@ -42,17 +44,20 @@ class DrawPG(object):
 		Initialize Policy Gradient Class
 		"""
 		# directory for training outputs
-		if not os.path.exists(output_path):
-			os.makedirs(output_path)
-		if not os.path.exists(model_path):
-			os.makedirs(model_path)
-						
+		for path in (output_path, model_path, im_path):
+			if not os.path.exists(path):
+				os.makedirs(path)
+
+		# take record of config file
+		shutil.copyfile('config.py', os.path.join(output_path, 'config.txt'))
+				
 		# store hyper-params
 		self.env = env
 		self.disc_batch_size = env.disc_batch_size
 		self.output_path = output_path
 		self.model_path = model_path
 		self.logger = get_logger(log_path)
+		self.im_path = im_path
 		self.gamma = gamma
 		self.lr = lr
 		self.use_baseline = use_baseline
@@ -465,7 +470,7 @@ class DrawPG(object):
 			if (t % self.draw_freq == 0):
 				# Also render
 				print('Rendering last generated digit...')
-				self.env.render()
+				self.env.render(os.path.join(self.im_path, 'render_{}.eps'.format(t / self.draw_freq)))
 
 			# compute reward statistics for this batch and log
 			avg_reward = np.mean(total_rewards)
@@ -495,11 +500,12 @@ class DrawPG(object):
 if __name__ == '__main__':
 	env = gym.make('DrawEnvTrainOnDemand-v0')
 
-	output_path = 'tensorboard/pg/'
-	model_path = output_path + 'weights/'
-	log_path = output_path + 'logs.txt'
+	output_path = 'results/pg/{}'.format(datetime.now().isoformat())										 
+	model_path = os.path.join(output_path, 'weights/')
+	log_path = os.path.join(output_path, 'logs.txt')
+	im_path = os.path.join(output_path, 'renders/')
 
-	model = DrawPG(env, output_path, model_path, log_path, gsteps_per_dstep = PG_GSTEPS_PER_DSTEPS)
+	model = DrawPG(env, output_path, model_path, log_path, im_path, gsteps_per_dstep = PG_GSTEPS_PER_DSTEPS)
 	model.run()
 
 

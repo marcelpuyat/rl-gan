@@ -1,5 +1,8 @@
 import drawing_env.envs.config as de_cfg
 
+# NOTE: Using env with discriminator trained only at end of episode.
+# Discriminator clamped to class 8.
+
 # General parameters
 FULL_DIMENSION = de_cfg.MNIST_DIMENSION
 LOCAL_DIMENSION = 11
@@ -18,7 +21,7 @@ PG_SUMMARY_FREQ = 1
 PG_DRAW_FREQ = 1
 PG_LR = 5e-7
 PG_EPISODE_LENGTH = FULL_DIMENSION * FULL_DIMENSION
-PG_NDRAWS_PER_BATCH = 100
+PG_NDRAWS_PER_BATCH = 1
 PG_BATCH_NSTEPS = PG_NDRAWS_PER_BATCH*PG_EPISODE_LENGTH
 PG_NUM_BATCHES = 50
-PG_GSTEPS_PER_DSTEPS = 3
+PG_GSTEPS_PER_DSTEPS = 1
