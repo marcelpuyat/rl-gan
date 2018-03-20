@@ -11,21 +11,21 @@ env = gym.make('DrawEnv-v0')
 # DQN Architecture.
 def deep_q_network(pixels, coordinate, number, num_actions_per_pixel):
 	with tf.variable_scope("deep_q_network") as scope:
-
 		batch_size = tf.shape(pixels)[0]
 		reshaped_input = tf.reshape(pixels, tf.stack([batch_size, LOCAL_DIMENSION, LOCAL_DIMENSION, 1]))
 
 		h0 = lrelu(conv2d(reshaped_input, 4, 2, 2, 1, 1, name="conv1"))
 		h1 = lrelu(conv2d(h0, 8, 2, 2, 1, 1, name="conv2"))
 		h2 = lrelu(conv2d(h1, 16, 2, 2, 1, 1, name="conv3"))
-		h2_flatted = tf.reshape(h2, [batch_size, LOCAL_DIMENSION * LOCAL_DIMENSION * 16])
-
+                h2_flatted = tf.layers.flatten(h2)
+                
 		# Append coordinate and number label to last layer because we don't want it to be convoluted with
-		# the pixel values.
+		# the pixel values. # TODO (matt): should we instead have one agent per number?
 		h3 = dense(tf.concat([h2_flatted, coordinate, number], axis=1), FULL_DIMENSION*FULL_DIMENSION, name="dense1")
 		h4 = dense(h3, FULL_DIMENSION, name="dense2")
 		h5 = dense(h4, num_actions_per_pixel, name="dense3")
 		return h5
+
 
 # Set up placeholders.
 pixels_placeholder = tf.placeholder(tf.float32, shape=[None, LOCAL_DIMENSION*LOCAL_DIMENSION], name='state')
@@ -40,6 +40,7 @@ action_mask = tf.one_hot(action_selected_placeholder, 2, 1.0, 0.0)
 estimated_q_value = deep_q_network(pixels_placeholder, coordinate_placeholder, number_placeholder, NUM_POSSIBLE_PIXEL_COLORS)
 objective_fn = tf.reduce_mean(tf.square(action_rewards_placeholder - tf.reduce_sum(estimated_q_value * action_mask, axis=1)))
 tf.summary.scalar("DQN Loss", objective_fn)
+
 # Set up optimizer
 q_optimizer = tf.train.AdamOptimizer(LEARNING_RATE, BETA1)
 grads = q_optimizer.compute_gradients(objective_fn)
@@ -52,8 +53,7 @@ sess = tf.Session()
 env.set_session(sess)
 
 merged = tf.summary.merge_all()
-train_writer = tf.summary.FileWriter('tensorboard/',
-									 sess.graph)
+train_writer = tf.summary.FileWriter('tensorboard/dqn/', sess.graph)
 
 # Initialize TF graph.
 sess.run(tf.global_variables_initializer())
@@ -86,7 +86,8 @@ for i in xrange(NUM_EPISODES):
 		all_pixels = curr_state['pixels']
 		number = curr_state['number']
 
-		local_pixels = get_local_pixels(all_pixels, curr_state['coordinate'])
+		local_pixels = get_local_pixels(all_pixels, curr_state['coordinate'],
+                                                window_size=LOCAL_DIMENSION)
 
 		pixels_batch[itr] = local_pixels
 		pixels_batch[itr+1] = local_pixels
@@ -96,9 +97,13 @@ for i in xrange(NUM_EPISODES):
 		numbers_batch[itr+1][0] = number
 
 		state_bytes = local_pixels.tobytes()
-
+                
 		# First do a forward prop to select the best action given the current state.
-		q_value_estimates = sess.run([estimated_q_value], {number_placeholder: np.array([[number]]), pixels_placeholder: np.array([local_pixels]), coordinate_placeholder: np.array([[curr_state['coordinate']]]) })
+		q_value_estimates = sess.run([estimated_q_value],
+                                             {number_placeholder: np.array([[number]]),
+                                              pixels_placeholder: np.array([local_pixels]),
+                                              coordinate_placeholder: np.array([[curr_state['coordinate']]])
+                                              })
 		selected_action = np.argmax(q_value_estimates[0])
 		other_action = 1 if selected_action == 0 else 0
 
@@ -111,8 +116,8 @@ for i in xrange(NUM_EPISODES):
 			action_count[state_bytes][0] = 0
 			action_count[state_bytes][1] = 0
 		elif action_count[state_bytes][selected_action] != 0:
-			print("Num times we've taken preferred in this state: " + str(action_count[state_bytes][selected_action]))
-			print("Num times we've taken other in this state: " + str(action_count[state_bytes][other_action]))
+#			print("Num times we've taken preferred in this state: " + str(action_count[state_bytes][selected_action]))
+#			print("Num times we've taken other in this state: " + str(action_count[state_bytes][other_action]))
 			rand_prob = (0.30 - (float(action_count[state_bytes][other_action]) / \
 				(action_count[state_bytes][other_action] + action_count[state_bytes][selected_action])))
 
@@ -121,7 +126,8 @@ for i in xrange(NUM_EPISODES):
 			if episode_annealing == 0:
 				episode_annealing = 1
 
-			# Annealing based on state. We want some sort of log/sqrt type function that increases random prob chance as we move on to later coordinates (since we usually are easily able to learn to do well for the earlier ones).
+			# Annealing based on state. We want some sort of log/sqrt type function that increases random prob chance
+                        # as we move on to later coordinates (since we usually are easily able to learn to do well for the earlier ones).
 			# Mostly just fiddled with these constants.
 			state_annealing = np.sqrt((FULL_DIMENSION*FULL_DIMENSION - curr_state['coordinate'])*5)
 			if state_annealing == 0:
@@ -129,11 +135,11 @@ for i in xrange(NUM_EPISODES):
 
 			rand_prob /= state_annealing / episode_annealing
 
-			print("Probability of switching: " + str(rand_prob))
+#			print("Probability of switching: " + str(rand_prob))
 			rand_prob = max(rand_prob, 0)
 
 		if np.random.rand() < rand_prob:
-			print("Selecting random action, rand prob: " + str(rand_prob))
+#			print("Selecting random action, rand prob: " + str(rand_prob))
 			tmp = selected_action
 			selected_action = other_action
 			other_action = tmp
@@ -158,14 +164,24 @@ for i in xrange(NUM_EPISODES):
 	coordinates_batch = coordinates_batch[random_order]
 	actions_selected_batch = actions_selected_batch[random_order]
 	numbers_batch = numbers_batch[random_order]
+        
 	# Given the reward, train our DQN.
 	discrim_real_placeholder, discrim_real_label_placeholder, discrim_fake_placeholder, discrim_fake_label_placeholder = env.get_discrim_placeholders()
 	real_values, real_labels, fake_values, fake_labels = env.get_discrim_placeholder_values()
 	real_loss, fake_loss = env.discrim_loss_tensors()
-	d_r_loss, d_f_loss, summary, _, loss = sess.run([real_loss, fake_loss, merged, train_q_network, objective_fn], {discrim_real_label_placeholder: real_labels, discrim_fake_label_placeholder: fake_labels, number_placeholder: numbers_batch, pixels_placeholder: pixels_batch, action_rewards_placeholder: rewards, action_selected_placeholder: actions_selected_batch, coordinate_placeholder: coordinates_batch, discrim_real_placeholder: real_values, discrim_fake_placeholder: fake_values})
-	print("Real loss: " + str(d_r_loss))
-	print("Fake loss: " + str(d_f_loss))
-	print("DQN Loss: " + str(loss))
+	d_r_loss, d_f_loss, summary, _, loss = sess.run([real_loss, fake_loss, merged, train_q_network, objective_fn],
+                                                        {discrim_real_label_placeholder: real_labels,
+                                                         discrim_fake_label_placeholder: fake_labels,
+                                                         number_placeholder: numbers_batch,
+                                                         pixels_placeholder: pixels_batch,
+                                                         action_rewards_placeholder: rewards,
+                                                         action_selected_placeholder: actions_selected_batch,
+                                                         coordinate_placeholder: coordinates_batch,
+                                                         discrim_real_placeholder: real_values,
+                                                         discrim_fake_placeholder: fake_values})
+#	print("Real loss: " + str(d_r_loss))
+#	print("Fake loss: " + str(d_f_loss))
+#	print("DQN Loss: " + str(loss))
 	if i % 10 == 0:
 		train_writer.add_summary(summary, i)
 	print("Episode finished. Rendering:")
@@ -178,7 +194,11 @@ for i in xrange(NUM_EPISODES):
 		# Do a full episode with no randomness
 		while not done:
 			local_pix = get_local_pixels(state['pixels'], state['coordinate'])
-			q_value_estimates = sess.run([estimated_q_value], {number_placeholder: np.array([[state['number']]]), pixels_placeholder: np.array([local_pix]), coordinate_placeholder: np.array([[state['coordinate']]]) })
+			q_value_estimates = sess.run([estimated_q_value],
+                                                     {number_placeholder: np.array([[state['number']]]),
+                                                      pixels_placeholder: np.array([local_pix]),
+                                                      coordinate_placeholder: np.array([[state['coordinate']]])
+                                                     })
 			selected_action = np.argmax(q_value_estimates[0])
 			next_state, _, done, _ = env.step(selected_action)
 			state = next_state
